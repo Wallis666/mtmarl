@@ -136,13 +136,12 @@ class BaseLogger:
         )
         self.end = time.time()
         print(
-            "环境 {} 任务 {} 算法 {} 实验 {} "
+            "环境 {} 任务 {} 算法 {} "
             "更新 {}/{} 回合, "
             "总时间步 {}/{}, FPS {}.".format(
                 self.args["env"],
                 self.task_name,
                 self.args["algo"],
-                self.args["exp_name"],
                 self.episode,
                 self.episodes,
                 self.total_num_steps,
