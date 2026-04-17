@@ -4,16 +4,16 @@
 
 用法:
     # 弹窗渲染（默认）
-    python -m scripts.render --algo mappo --env mamujoco \
+    python -m scripts.render_baselines --algo mappo --env mamujoco \
         --model_dir baselines/runs/.../models
 
     # 录制视频
-    python -m scripts.render --algo mappo --env mamujoco \
+    python -m scripts.render_baselines --algo mappo --env mamujoco \
         --model_dir baselines/runs/.../models \
         --render_mode rgb_array --video_dir baselines/runs/videos
 
     # 指定回合数
-    python -m scripts.render --algo mappo --env mamujoco \
+    python -m scripts.render_baselines --algo mappo --env mamujoco \
         --model_dir baselines/runs/.../models --render_episodes 5
 """
 
