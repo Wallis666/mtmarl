@@ -19,11 +19,12 @@
 
 import argparse
 import os
+import sys
 
 # 在导入 mujoco 之前设置离屏渲染后端，
-# 使 rgb_array 模式在无头服务器上也能工作。
-# EGL 需要 GPU 驱动支持，OSMesa 为纯 CPU 软渲染备选。
-if "MUJOCO_GL" not in os.environ:
+# 使 rgb_array 模式在无头 Linux 服务器上也能工作。
+# Windows 使用 WGL（默认），无需设置；Linux 使用 EGL（需 GPU）或 OSMesa（纯 CPU）。
+if sys.platform == "linux" and "MUJOCO_GL" not in os.environ:
     os.environ["MUJOCO_GL"] = "egl"
 
 import imageio
