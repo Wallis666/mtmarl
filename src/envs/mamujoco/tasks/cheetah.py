@@ -265,6 +265,23 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
             ).xpos[2]
         )
 
+    def _get_geom_z(
+        self,
+        geom_name: str,
+    ) -> float:
+        """
+        获取指定几何体的 z 轴高度。
+
+        参数:
+            geom_name: 几何体名称，如 "head"。
+
+        返回:
+            该几何体当前的 z 坐标值。
+        """
+        env = self.single_agent_env.unwrapped
+        geom_id = env.model.geom(geom_name).id
+        return float(env.data.geom_xpos[geom_id][2])
+
     def _get_torso_pitch(self) -> float:
         """
         获取躯干俯仰角（rooty 关节位置）。
