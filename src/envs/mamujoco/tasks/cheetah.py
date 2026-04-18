@@ -495,7 +495,7 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
             value_at_margin=0,
         )
 
-        return (0.4 * pitch + 0.3 * foot_up + 0.3 * slow) * grounded
+        return (0.5 * pitch + 0.5 * foot_up) * grounded * slow
 
     def _stand_ffoot_reward(
         self,
