@@ -22,11 +22,17 @@ _RUN_SPEED: float = 8.0
 # 躯干俯仰角（rooty）容许上界（±20°），角度在此范围内视为直立
 _UPRIGHT_PITCH_BOUND: float = float(np.deg2rad(20))
 
-# 单足站立时俯仰角目标区间下界
-_PITCH_TARGET_LOW: float = float(np.deg2rad(70))
+# 单足站立任务俯仰角目标区间下界
+_STAND_ONE_FOOT_PITCH_LOW: float = float(np.deg2rad(70))
 
-# 单足站立时俯仰角目标区间上界
-_PITCH_TARGET_HIGH: float = float(np.deg2rad(90))
+# 单足站立任务俯仰角目标区间上界
+_STAND_ONE_FOOT_PITCH_HIGH: float = float(np.deg2rad(90))
+
+# 单足跑步任务俯仰角目标区间下界
+_RUN_ONE_FOOT_PITCH_LOW: float = float(np.deg2rad(50))
+
+# 单足跑步任务俯仰角目标区间上界
+_RUN_ONE_FOOT_PITCH_HIGH: float = float(np.deg2rad(70))
 
 # 姿态失败判定: 反方向翻倒阈值
 _POSTURE_FAIL_LOW: float = float(np.deg2rad(-10))
@@ -43,8 +49,11 @@ _RAISED_FOOT_TARGET_Z: float = 1.0
 # 脚的初始离地高度（米），用于计算抬脚奖励的 margin
 _FOOT_INITIAL_Z: float = 0.2
 
-# 站立任务允许的最大水平速度（m/s），超出则 slow 奖励衰减
-_STAND_MAX_SPEED: float = 1.0
+# 单足站立任务允许的最大水平速度（m/s），超出则 slow 奖励衰减
+_STAND_ONE_FOOT_MAX_SPEED: float = 1.0
+
+# 单足跑步任务目标速度（m/s）
+_RUN_ONE_FOOT_SPEED: float = 4.0
 
 
 class HalfCheetahMultiTask(MultiAgentMujocoEnv):
@@ -408,6 +417,8 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
     def _one_foot_pitch_reward(
         self,
         raised_foot: str,
+        pitch_low: float,
+        pitch_high: float,
     ) -> float:
         """
         单足站立时的躯干倾斜子奖励。
@@ -416,9 +427,9 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
         pitch > 0 → head 朝下。
 
         以 signed_pitch = pitch_sign * pitch 为变量:
-            [70°, 90°]    → 1（目标区间）
-            < 70°         → reciprocal 衰减至 0
-            > 90°         → 0（硬切断）
+            [pitch_low, pitch_high] → 1（目标区间）
+            < pitch_low             → reciprocal 衰减至 0
+            > pitch_high            → 0（硬切断）
 
         参数:
             raised_foot: 需要抬起的足部名称
@@ -426,6 +437,8 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
                     → pitch_sign = -1
                 bfoot 抬起 → ffoot 撑地，期望 pitch > 0
                     → pitch_sign = +1
+            pitch_low: 俯仰角目标区间下界（弧度）。
+            pitch_high: 俯仰角目标区间上界（弧度）。
 
         返回:
             [0, 1] 区间内的奖励值。
@@ -434,12 +447,12 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
         signed_pitch = pitch_sign * self._get_torso_pitch()
         lower = tolerance(
             signed_pitch,
-            bounds=(_PITCH_TARGET_LOW, float("inf")),
-            margin=_PITCH_TARGET_LOW,
+            bounds=(pitch_low, float("inf")),
+            margin=pitch_low,
         )
         upper = tolerance(
             signed_pitch,
-            bounds=(-float("inf"), _PITCH_TARGET_HIGH),
+            bounds=(-float("inf"), pitch_high),
         )
         return lower * upper
 
@@ -498,14 +511,16 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
             bounds=(0.0, _SUPPORT_FOOT_Z_BOUND),
         )
 
-        pitch = self._one_foot_pitch_reward(raised_foot)
+        pitch = self._one_foot_pitch_reward(
+            raised_foot, _STAND_ONE_FOOT_PITCH_LOW, _STAND_ONE_FOOT_PITCH_HIGH,
+        )
         foot_up = self._raised_foot_reward(raised_foot)
 
         # 鼓励静止: 速度在 ±1 m/s 内满分，超出后线性衰减至 0
         vx = self._get_x_velocity(infos)
         slow = tolerance(
             vx,
-            bounds=(-_STAND_MAX_SPEED, _STAND_MAX_SPEED),
+            bounds=(-_STAND_ONE_FOOT_MAX_SPEED, _STAND_ONE_FOOT_MAX_SPEED),
             sigmoid="linear",
             value_at_margin=0,
         )
@@ -571,14 +586,16 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
             bounds=(0.0, _SUPPORT_FOOT_Z_BOUND),
         )
 
-        pitch = self._one_foot_pitch_reward(raised_foot)
+        pitch = self._one_foot_pitch_reward(
+            raised_foot, _RUN_ONE_FOOT_PITCH_LOW, _RUN_ONE_FOOT_PITCH_HIGH,
+        )
         foot_up = self._raised_foot_reward(raised_foot)
 
         speed = self._get_x_velocity(infos)
         speed_reward = tolerance(
             speed,
-            bounds=(_RUN_SPEED, float("inf")),
-            margin=_RUN_SPEED,
+            bounds=(_RUN_ONE_FOOT_SPEED, float("inf")),
+            margin=_RUN_ONE_FOOT_SPEED,
             value_at_margin=0,
             sigmoid="linear",
         )
