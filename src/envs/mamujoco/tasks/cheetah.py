@@ -5,6 +5,7 @@ HalfCheetah 多任务多智能体环境模块。
 提供多种运动任务的自定义奖励函数，支持在任务间动态切换。
 """
 
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -16,47 +17,67 @@ from numpy.typing import NDArray
 from src.utils.reward import tolerance
 
 
-# 奔跑目标速度
-_RUN_SPEED: float = 8.0
+# ------------------------------------------------------------------
+# 任务参数配置
+# ------------------------------------------------------------------
 
-# 躯干俯仰角（rooty）容许上界（±20°），角度在此范围内视为直立
-_UPRIGHT_PITCH_BOUND: float = float(np.deg2rad(20))
+@dataclass(frozen=True)
+class RunConfig:
+    """双足奔跑任务参数。"""
 
-# 单足站立任务俯仰角目标区间下界
-_STAND_ONE_FOOT_PITCH_LOW: float = float(np.deg2rad(70))
+    # 目标速度（m/s）
+    speed: float = 8.0
+    # 躯干俯仰角容许上界（±），角度在此范围内视为直立
+    upright_pitch_bound: float = float(np.deg2rad(20))
 
-# 单足站立任务俯仰角目标区间上界
-_STAND_ONE_FOOT_PITCH_HIGH: float = float(np.deg2rad(90))
 
-# 单足跑步任务俯仰角目标区间下界
-_RUN_ONE_FOOT_PITCH_LOW: float = float(np.deg2rad(50))
+@dataclass(frozen=True)
+class PostureConfig:
+    """单足姿态任务的共用参数。"""
 
-# 单足跑步任务俯仰角目标区间上界
-_RUN_ONE_FOOT_PITCH_HIGH: float = float(np.deg2rad(70))
+    # 姿态失败判定: 反方向翻倒阈值
+    fail_pitch_low: float = float(np.deg2rad(-10))
+    # 姿态失败判定: 过度倾斜阈值
+    fail_pitch_high: float = float(np.deg2rad(100))
+    # 支撑脚离地高度上界（米），超过则视为离地
+    support_foot_z_bound: float = 0.5
+    # 抬起脚的目标高度（米），达到此高度即获得满分
+    raised_foot_target_z: float = 1.0
+    # 脚的初始离地高度（米），用于计算抬脚奖励的 margin
+    foot_initial_z: float = 0.2
 
-# 姿态失败判定: 反方向翻倒阈值
-_POSTURE_FAIL_LOW: float = float(np.deg2rad(-10))
 
-# 姿态失败判定: 过度倾斜阈值
-_POSTURE_FAIL_HIGH: float = float(np.deg2rad(100))
+@dataclass(frozen=True)
+class OneFootStandConfig:
+    """单足站立任务参数。"""
 
-# 支撑脚离地高度上界（米），超过则视为离地
-_SUPPORT_FOOT_Z_BOUND: float = 0.5
+    # 俯仰角目标区间下界
+    pitch_low: float = float(np.deg2rad(70))
+    # 俯仰角目标区间上界
+    pitch_high: float = float(np.deg2rad(90))
+    # 允许的最大水平速度（m/s），超出则 slow 奖励衰减
+    max_speed: float = 1.0
+    # head 最低高度（米），低于此值 stand_ffoot 奖励归零
+    head_min_z: float = 0.25
 
-# 抬起脚的目标高度（米），达到此高度即获得满分
-_RAISED_FOOT_TARGET_Z: float = 1.0
 
-# 脚的初始离地高度（米），用于计算抬脚奖励的 margin
-_FOOT_INITIAL_Z: float = 0.2
+@dataclass(frozen=True)
+class OneFootRunConfig:
+    """单足跑步任务参数。"""
 
-# 单足站立任务允许的最大水平速度（m/s），超出则 slow 奖励衰减
-_STAND_ONE_FOOT_MAX_SPEED: float = 1.0
+    # 俯仰角目标区间下界
+    pitch_low: float = float(np.deg2rad(50))
+    # 俯仰角目标区间上界
+    pitch_high: float = float(np.deg2rad(70))
+    # 目标速度（m/s）
+    speed: float = 4.0
 
-# head 最低高度（米），低于此值 stand_ffoot 奖励归零
-_HEAD_MIN_Z: float = 0.25
 
-# 单足跑步任务目标速度（m/s）
-_RUN_ONE_FOOT_SPEED: float = 4.0
+# 全局默认配置实例
+_RUN = RunConfig()
+_POSTURE = PostureConfig()
+_ONE_FOOT_STAND = OneFootStandConfig()
+_ONE_FOOT_RUN = OneFootRunConfig()
 
 
 class HalfCheetahMultiTask(MultiAgentMujocoEnv):
@@ -321,8 +342,8 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
         )
         signed = pitch_sign * self._get_torso_pitch()
         return (
-            signed < _POSTURE_FAIL_LOW
-            or signed > _POSTURE_FAIL_HIGH
+            signed < _POSTURE.fail_pitch_low
+            or signed > _POSTURE.fail_pitch_high
         )
 
     def _upright_reward(self) -> float:
@@ -337,7 +358,10 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
         """
         return tolerance(
             self._get_torso_pitch(),
-            bounds=(-_UPRIGHT_PITCH_BOUND, _UPRIGHT_PITCH_BOUND),
+            bounds=(
+                -_RUN.upright_pitch_bound,
+                _RUN.upright_pitch_bound,
+            ),
         )
 
     # ------------------------------------------------------------------
@@ -401,8 +425,8 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
         speed = self._get_x_velocity(infos)
         speed_reward = tolerance(
             speed,
-            bounds=(_RUN_SPEED, float("inf")),
-            margin=_RUN_SPEED,
+            bounds=(_RUN.speed, float("inf")),
+            margin=_RUN.speed,
             value_at_margin=0,
             sigmoid="linear",
         )
@@ -427,8 +451,8 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
         speed = self._get_x_velocity(infos)
         speed_reward = tolerance(
             speed,
-            bounds=(-float("inf"), -_RUN_SPEED),
-            margin=_RUN_SPEED,
+            bounds=(-float("inf"), -_RUN.speed),
+            margin=_RUN.speed,
             value_at_margin=0,
             sigmoid="linear",
         )
@@ -494,8 +518,11 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
         foot_z = self._get_body_z(raised_foot)
         return tolerance(
             foot_z,
-            bounds=(_RAISED_FOOT_TARGET_Z, float("inf")),
-            margin=_RAISED_FOOT_TARGET_Z - _FOOT_INITIAL_Z,
+            bounds=(_POSTURE.raised_foot_target_z, float("inf")),
+            margin=(
+                _POSTURE.raised_foot_target_z
+                - _POSTURE.foot_initial_z
+            ),
             sigmoid="linear",
             value_at_margin=0,
         )
@@ -522,25 +549,32 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
             [0, 1] 区间内的奖励值。
         """
         # raised_foot 抬起 → 反向那只脚是支撑脚
-        support_foot = "bfoot" if raised_foot == "ffoot" else "ffoot"
+        support_foot = (
+            "bfoot" if raised_foot == "ffoot" else "ffoot"
+        )
         support_z = self._get_body_z(support_foot)
 
         # 支撑脚必须靠近地面（< 0.5m），否则给 0
         grounded = tolerance(
             support_z,
-            bounds=(0.0, _SUPPORT_FOOT_Z_BOUND),
+            bounds=(0.0, _POSTURE.support_foot_z_bound),
         )
 
         pitch = self._one_foot_pitch_reward(
-            raised_foot, _STAND_ONE_FOOT_PITCH_LOW, _STAND_ONE_FOOT_PITCH_HIGH,
+            raised_foot,
+            _ONE_FOOT_STAND.pitch_low,
+            _ONE_FOOT_STAND.pitch_high,
         )
         foot_up = self._raised_foot_reward(raised_foot)
 
-        # 鼓励静止: 速度在 ±1 m/s 内满分，超出后线性衰减至 0
+        # 鼓励静止: 速度在 ±max_speed 内满分，超出后线性衰减至 0
         vx = self._get_x_velocity(infos)
         slow = tolerance(
             vx,
-            bounds=(-_STAND_ONE_FOOT_MAX_SPEED, _STAND_ONE_FOOT_MAX_SPEED),
+            bounds=(
+                -_ONE_FOOT_STAND.max_speed,
+                _ONE_FOOT_STAND.max_speed,
+            ),
             sigmoid="linear",
             value_at_margin=0,
         )
@@ -565,9 +599,12 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
         """
         head_up = tolerance(
             self._get_geom_z("head"),
-            bounds=(_HEAD_MIN_Z, float("inf")),
+            bounds=(_ONE_FOOT_STAND.head_min_z, float("inf")),
         )
-        return self._stand_in_posture_reward("bfoot", infos) * head_up
+        return (
+            self._stand_in_posture_reward("bfoot", infos)
+            * head_up
+        )
 
     def _stand_bfoot_reward(
         self,
@@ -605,24 +642,28 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
         返回:
             [0, 1] 区间内的奖励值。
         """
-        support_foot = "bfoot" if raised_foot == "ffoot" else "ffoot"
+        support_foot = (
+            "bfoot" if raised_foot == "ffoot" else "ffoot"
+        )
         support_z = self._get_body_z(support_foot)
 
         grounded = tolerance(
             support_z,
-            bounds=(0.0, _SUPPORT_FOOT_Z_BOUND),
+            bounds=(0.0, _POSTURE.support_foot_z_bound),
         )
 
         pitch = self._one_foot_pitch_reward(
-            raised_foot, _RUN_ONE_FOOT_PITCH_LOW, _RUN_ONE_FOOT_PITCH_HIGH,
+            raised_foot,
+            _ONE_FOOT_RUN.pitch_low,
+            _ONE_FOOT_RUN.pitch_high,
         )
         foot_up = self._raised_foot_reward(raised_foot)
 
         speed = self._get_x_velocity(infos)
         speed_reward = tolerance(
             speed,
-            bounds=(_RUN_ONE_FOOT_SPEED, float("inf")),
-            margin=_RUN_ONE_FOOT_SPEED,
+            bounds=(_ONE_FOOT_RUN.speed, float("inf")),
+            margin=_ONE_FOOT_RUN.speed,
             value_at_margin=0,
             sigmoid="linear",
         )
