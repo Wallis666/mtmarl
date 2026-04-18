@@ -52,6 +52,9 @@ _FOOT_INITIAL_Z: float = 0.2
 # 单足站立任务允许的最大水平速度（m/s），超出则 slow 奖励衰减
 _STAND_ONE_FOOT_MAX_SPEED: float = 1.0
 
+# head 最低高度（米），低于此值 stand_ffoot 奖励归零
+_HEAD_MIN_Z: float = 0.25
+
 # 单足跑步任务目标速度（m/s）
 _RUN_ONE_FOOT_SPEED: float = 4.0
 
@@ -551,13 +554,20 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
         """
         前肢着地、后肢抬高姿态站立奖励。
 
+        在基础姿态奖励上乘以 head 高度约束因子，
+        防止 agent 利用头部撑地作弊。
+
         参数:
             infos: 环境 step 返回的信息字典。
 
         返回:
             [0, 1] 区间内的奖励值。
         """
-        return self._stand_in_posture_reward("bfoot", infos)
+        head_up = tolerance(
+            self._get_geom_z("head"),
+            bounds=(_HEAD_MIN_Z, float("inf")),
+        )
+        return self._stand_in_posture_reward("bfoot", infos) * head_up
 
     def _stand_bfoot_reward(
         self,
