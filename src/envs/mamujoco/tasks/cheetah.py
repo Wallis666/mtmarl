@@ -182,9 +182,16 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
         if self._render_mode == "human":
             vx = self._get_x_velocity(infos)
             pitch_deg = float(np.rad2deg(self._get_torso_pitch()))
+            torso_z = self._get_body_z("torso")
+            bfoot_z = self._get_body_z("bfoot")
+            ffoot_z = self._get_body_z("ffoot")
             print(
-                f"\rtask={self.task:<15} v_x={vx:+6.2f} m/s  "
-                f"pitch={pitch_deg:+6.1f}°  r={task_reward:.3f}",
+                f"\rtask={self.task:<15} v_x={vx:+6.2f}  "
+                f"pitch={pitch_deg:+6.1f}°  "
+                f"torso={torso_z:.2f}  "
+                f"bfoot={bfoot_z:.2f}  "
+                f"ffoot={ffoot_z:.2f}  "
+                f"r={task_reward:.3f} ",
                 end="",
                 flush=True,
             )
