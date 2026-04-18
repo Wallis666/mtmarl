@@ -60,6 +60,8 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
         - run_bwd: 反向跑
         - stand_ffoot: 前肢着地、后肢抬高姿态站立（无速度要求）
         - stand_bfoot: 后肢着地、前肢抬高姿态站立（无速度要求）
+        - run_fwd_ffoot: 前肢着地、后肢抬高姿态正向跑
+        - run_fwd_bfoot: 后肢着地、前肢抬高姿态正向跑
     """
 
     TASKS: list[str] = [
@@ -67,12 +69,16 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
         "run_bwd",
         "stand_ffoot",
         "stand_bfoot",
+        "run_fwd_ffoot",
+        "run_fwd_bfoot",
     ]
 
     # 需要早期终止的姿态任务集合
     _POSTURE_TASKS: frozenset[str] = frozenset({
         "stand_ffoot",
         "stand_bfoot",
+        "run_fwd_ffoot",
+        "run_fwd_bfoot",
     })
 
     def __init__(
@@ -280,7 +286,10 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
         task = self.task
         if task not in self._POSTURE_TASKS:
             return False
-        pitch_sign = -1.0 if task == "stand_bfoot" else 1.0
+        pitch_sign = (
+            -1.0 if task in ("stand_bfoot", "run_fwd_bfoot")
+            else 1.0
+        )
         signed = pitch_sign * self._get_torso_pitch()
         return (
             signed < _POSTURE_FAIL_LOW
@@ -331,6 +340,10 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
             return self._stand_ffoot_reward(infos)
         elif task == "stand_bfoot":
             return self._stand_bfoot_reward(infos)
+        elif task == "run_fwd_ffoot":
+            return self._run_fwd_ffoot_reward(infos)
+        elif task == "run_fwd_bfoot":
+            return self._run_fwd_bfoot_reward(infos)
         else:
             raise NotImplementedError(
                 f"任务 {task!r} 尚未实现"
@@ -528,3 +541,76 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
             [0, 1] 区间内的奖励值。
         """
         return self._stand_in_posture_reward("ffoot", infos)
+
+    def _run_fwd_in_posture_reward(
+        self,
+        raised_foot: str,
+        infos: dict[str, dict],
+    ) -> float:
+        """
+        单足姿态正向跑的奖励。
+
+        综合四个子奖励:
+            - pitch: 躯干倾斜到目标角度
+            - grounded: 支撑脚贴近地面
+            - foot_up: 抬起脚达到目标高度
+            - speed: 沿 x 正方向达到目标速度
+
+        参数:
+            raised_foot: 需要抬起的足部名称。
+            infos: 环境 step 返回的信息字典。
+
+        返回:
+            [0, 1] 区间内的奖励值。
+        """
+        support_foot = "bfoot" if raised_foot == "ffoot" else "ffoot"
+        support_z = self._get_body_z(support_foot)
+
+        grounded = tolerance(
+            support_z,
+            bounds=(0.0, _SUPPORT_FOOT_Z_BOUND),
+        )
+
+        pitch = self._one_foot_pitch_reward(raised_foot)
+        foot_up = self._raised_foot_reward(raised_foot)
+
+        speed = self._get_x_velocity(infos)
+        speed_reward = tolerance(
+            speed,
+            bounds=(_RUN_SPEED, float("inf")),
+            margin=_RUN_SPEED,
+            value_at_margin=0,
+            sigmoid="linear",
+        )
+
+        return pitch * foot_up * grounded * speed_reward
+
+    def _run_fwd_ffoot_reward(
+        self,
+        infos: dict[str, dict],
+    ) -> float:
+        """
+        前肢着地、后肢抬高姿态正向跑奖励。
+
+        参数:
+            infos: 环境 step 返回的信息字典。
+
+        返回:
+            [0, 1] 区间内的奖励值。
+        """
+        return self._run_fwd_in_posture_reward("bfoot", infos)
+
+    def _run_fwd_bfoot_reward(
+        self,
+        infos: dict[str, dict],
+    ) -> float:
+        """
+        后肢着地、前肢抬高姿态正向跑奖励。
+
+        参数:
+            infos: 环境 step 返回的信息字典。
+
+        返回:
+            [0, 1] 区间内的奖励值。
+        """
+        return self._run_fwd_in_posture_reward("ffoot", infos)

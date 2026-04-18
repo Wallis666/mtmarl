@@ -6,7 +6,7 @@ scenario: HalfCheetah
 agent_conf: "2x3"
 # 观测深度: 0 仅局部、1 局部加一阶邻居
 agent_obsk: 1
-# 初始任务: run_fwd / run_bwd / stand_ffoot / stand_bfoot
+# 初始任务: run_fwd
 task: run_fwd
 # 单回合最大步数
 episode_limit: 1000
