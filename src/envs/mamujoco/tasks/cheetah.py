@@ -67,10 +67,12 @@ class OneFootStandConfig:
 class OneFootRunConfig:
     """单足跑步任务参数。"""
 
-    # 俯仰角目标区间下界
-    pitch_low: float = float(np.deg2rad(50))
-    # 俯仰角目标区间上界
-    pitch_high: float = float(np.deg2rad(70))
+    # run_fwd_ffoot 俯仰角目标区间（前肢着地，前倾与跑步方向一致）
+    ffoot_pitch_low: float = float(np.deg2rad(50))
+    ffoot_pitch_high: float = float(np.deg2rad(70))
+    # run_fwd_bfoot 俯仰角目标区间（后肢着地，后仰与跑步方向相反，降低难度）
+    bfoot_pitch_low: float = float(np.deg2rad(30))
+    bfoot_pitch_high: float = float(np.deg2rad(50))
     # 目标速度（m/s）
     speed: float = 4.0
 
@@ -638,6 +640,8 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
     def _run_fwd_in_posture_reward(
         self,
         raised_foot: str,
+        pitch_low: float,
+        pitch_high: float,
         infos: dict[str, dict],
     ) -> float:
         """
@@ -651,6 +655,8 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
 
         参数:
             raised_foot: 需要抬起的足部名称。
+            pitch_low: 俯仰角目标区间下界（弧度）。
+            pitch_high: 俯仰角目标区间上界（弧度）。
             infos: 环境 step 返回的信息字典。
 
         返回:
@@ -667,9 +673,7 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
         )
 
         pitch = self._one_foot_pitch_reward(
-            raised_foot,
-            _ONE_FOOT_RUN.pitch_low,
-            _ONE_FOOT_RUN.pitch_high,
+            raised_foot, pitch_low, pitch_high,
         )
         foot_up = self._raised_foot_reward(raised_foot)
 
@@ -697,7 +701,12 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
         返回:
             [0, 1] 区间内的奖励值。
         """
-        return self._run_fwd_in_posture_reward("bfoot", infos)
+        return self._run_fwd_in_posture_reward(
+            "bfoot",
+            _ONE_FOOT_RUN.ffoot_pitch_low,
+            _ONE_FOOT_RUN.ffoot_pitch_high,
+            infos,
+        )
 
     def _run_fwd_bfoot_reward(
         self,
@@ -712,4 +721,9 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
         返回:
             [0, 1] 区间内的奖励值。
         """
-        return self._run_fwd_in_posture_reward("ffoot", infos)
+        return self._run_fwd_in_posture_reward(
+            "ffoot",
+            _ONE_FOOT_RUN.bfoot_pitch_low,
+            _ONE_FOOT_RUN.bfoot_pitch_high,
+            infos,
+        )
