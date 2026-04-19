@@ -71,8 +71,8 @@ class OneFootRunConfig:
     ffoot_pitch_low: float = float(np.deg2rad(50))
     ffoot_pitch_high: float = float(np.deg2rad(70))
     # run_fwd_bfoot 俯仰角目标区间（后肢着地，后仰与跑步方向相反，降低难度）
-    bfoot_pitch_low: float = float(np.deg2rad(30))
-    bfoot_pitch_high: float = float(np.deg2rad(50))
+    bfoot_pitch_low: float = float(np.deg2rad(70))
+    bfoot_pitch_high: float = float(np.deg2rad(90))
     # run_fwd_bfoot 支撑脚(bfoot)离地高度上界（米），
     # 后腿蹬地时自然抬起幅度较大，需比默认值更宽松
     bfoot_support_z_bound: float = 0.8
