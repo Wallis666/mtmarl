@@ -55,12 +55,10 @@ class OneFootStandConfig:
     bfoot_pitch_low: float = float(np.deg2rad(70))
     bfoot_pitch_high: float = float(np.deg2rad(90))
     # stand_ffoot 俯仰角目标区间（前肢着地，降低以避免 head 触地）
-    ffoot_pitch_low: float = float(np.deg2rad(40))
-    ffoot_pitch_high: float = float(np.deg2rad(60))
+    ffoot_pitch_low: float = float(np.deg2rad(50))
+    ffoot_pitch_high: float = float(np.deg2rad(70))
     # 允许的最大水平速度（m/s），超出则 slow 奖励衰减
     max_speed: float = 1.0
-    # head 最低高度（米），低于此值 stand_ffoot 奖励归零
-    head_min_z: float = 0.25
 
 
 @dataclass(frozen=True)
@@ -592,27 +590,17 @@ class HalfCheetahMultiTask(MultiAgentMujocoEnv):
         """
         前肢着地、后肢抬高姿态站立奖励。
 
-        使用较低的 pitch 目标（40°–60°）并附加 head 高度
-        约束，双重保证 head 不触地。
-
         参数:
             infos: 环境 step 返回的信息字典。
 
         返回:
             [0, 1] 区间内的奖励值。
         """
-        head_up = tolerance(
-            self._get_geom_z("head"),
-            bounds=(_ONE_FOOT_STAND.head_min_z, float("inf")),
-        )
-        return (
-            self._stand_in_posture_reward(
-                "bfoot",
-                _ONE_FOOT_STAND.ffoot_pitch_low,
-                _ONE_FOOT_STAND.ffoot_pitch_high,
-                infos,
-            )
-            * head_up
+        return self._stand_in_posture_reward(
+            "bfoot",
+            _ONE_FOOT_STAND.ffoot_pitch_low,
+            _ONE_FOOT_STAND.ffoot_pitch_high,
+            infos,
         )
 
     def _stand_bfoot_reward(
