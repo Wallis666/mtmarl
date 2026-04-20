@@ -23,14 +23,20 @@ from src.utils.reward import tolerance
 # ------------------------------------------------------------------
 
 @dataclass(frozen=True)
-class StandConfig:
-    """站立任务参数。"""
+class CommonConfig:
+    """各任务共用参数。"""
 
     # torso 相对于 foot 的最小高度差（米），
     # 高于此值视为站立
     stand_height: float = 0.6
     # 站立高度上界（米）
     stand_height_upper: float = 2.0
+
+
+@dataclass(frozen=True)
+class StandConfig:
+    """站立任务参数。"""
+
     # 动作惩罚 margin
     control_margin: float = 1.0
 
@@ -39,15 +45,16 @@ class StandConfig:
 class HopConfig:
     """跳跃任务参数。"""
 
-    # torso 相对于 foot 的最小高度差（米）
-    stand_height: float = 0.6
-    # 站立高度上界（米）
-    stand_height_upper: float = 2.0
     # 目标水平速度（m/s）
     speed: float = 2.0
+    # 躯干俯仰角容许下界，向前跳时允许适度前倾
+    upright_pitch_low: float = float(np.deg2rad(-10))
+    # 躯干俯仰角容许上界，限制后仰幅度
+    upright_pitch_high: float = float(np.deg2rad(20))
 
 
 # 全局默认配置实例
+_COMMON = CommonConfig()
 _STAND = StandConfig()
 _HOP = HopConfig()
 
@@ -95,6 +102,7 @@ class HopperMultiTask(MultiAgentMujocoEnv):
             agent_conf=agent_conf,
             agent_obsk=agent_obsk,
             render_mode=render_mode,
+            terminate_when_unhealthy=False,
             **kwargs,
         )
 
@@ -327,8 +335,8 @@ class HopperMultiTask(MultiAgentMujocoEnv):
         standing = tolerance(
             self._get_height(),
             bounds=(
-                _STAND.stand_height,
-                _STAND.stand_height_upper,
+                _COMMON.stand_height,
+                _COMMON.stand_height_upper,
             ),
         )
         ctrl = self.single_agent_env.unwrapped.data.ctrl
@@ -344,6 +352,25 @@ class HopperMultiTask(MultiAgentMujocoEnv):
 
         return standing * small_control
 
+    def _upright_reward(self) -> float:
+        """
+        躯干直立姿态奖励。
+
+        俯仰角在 [-10°, +20°] 以内时返回 1，超出后
+        立即返回 0；向前跳时允许适度前倾（-10°），
+        但限制后仰幅度（+20°）。
+
+        返回:
+            0 或 1。
+        """
+        return tolerance(
+            self._get_torso_pitch(),
+            bounds=(
+                _HOP.upright_pitch_low,
+                _HOP.upright_pitch_high,
+            ),
+        )
+
     def _hop_reward(
         self,
         infos: dict[str, dict],
@@ -351,9 +378,11 @@ class HopperMultiTask(MultiAgentMujocoEnv):
         """
         跳跃奖励。
 
-        综合两个子奖励:
+        综合三个子奖励:
             - standing: torso 相对 foot 高度在
                 目标范围内时满分
+            - upright: 俯仰角在 ±20° 内时满分，
+                超出后归零
             - hopping: 沿 x 正方向达到目标速度
 
         参数:
@@ -365,8 +394,8 @@ class HopperMultiTask(MultiAgentMujocoEnv):
         standing = tolerance(
             self._get_height(),
             bounds=(
-                _HOP.stand_height,
-                _HOP.stand_height_upper,
+                _COMMON.stand_height,
+                _COMMON.stand_height_upper,
             ),
         )
 
@@ -379,4 +408,4 @@ class HopperMultiTask(MultiAgentMujocoEnv):
             sigmoid="linear",
         )
 
-        return standing * hopping
+        return standing * self._upright_reward() * hopping
