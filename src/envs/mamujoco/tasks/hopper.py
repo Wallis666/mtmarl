@@ -44,7 +44,7 @@ class HopConfig:
     # 站立高度上界（米）
     stand_height_upper: float = 2.0
     # 目标水平速度（m/s）
-    speed: float = 4.0
+    speed: float = 2.0
 
 
 # 全局默认配置实例
@@ -95,6 +95,7 @@ class HopperMultiTask(MultiAgentMujocoEnv):
             agent_conf=agent_conf,
             agent_obsk=agent_obsk,
             render_mode=render_mode,
+            terminate_when_unhealthy=False,
             **kwargs,
         )
 
