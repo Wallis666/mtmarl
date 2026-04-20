@@ -8,15 +8,40 @@ from json import JSONDecodeError
 import yaml
 
 
+def _deep_update(
+    base,
+    overrides,
+):
+    """递归地用 overrides 中的值更新 base 字典。
+
+    参数:
+        base: 待更新的基础字典。
+        overrides: 覆盖值字典。
+    """
+    for k, v in overrides.items():
+        if (
+            isinstance(v, dict)
+            and isinstance(base.get(k), dict)
+        ):
+            _deep_update(base[k], v)
+        else:
+            base[k] = v
+
+
 def get_defaults_yaml_args(
     algo,
     env,
+    scenario,
 ):
-    """根据用户指定的算法和环境加载配置文件。
+    """根据算法、环境和场景加载配置文件。
+
+    环境配置文件位于 configs/envs/{env}/{scenario}.yaml，
+    例如 configs/envs/mamujoco/cheetah.yaml。
 
     参数:
         algo: 算法名称。
         env: 环境名称。
+        scenario: 场景名称，用于选择环境子配置文件。
     返回:
         algo_args: 算法配置字典。
         env_args: 环境配置字典。
@@ -25,16 +50,23 @@ def get_defaults_yaml_args(
         os.path.dirname(os.path.abspath(__file__))
     )[0]
     algo_cfg_path = os.path.join(
-        base_path, "configs", "algos", f"{algo}.yaml"
+        base_path, "configs", "algos", f"{algo}.yaml",
     )
     env_cfg_path = os.path.join(
-        base_path, "configs", "envs", f"{env}.yaml"
+        base_path, "configs", "envs",
+        env, f"{scenario.lower()}.yaml",
     )
 
     with open(algo_cfg_path, "r", encoding="utf-8") as file:
         algo_args = yaml.load(file, Loader=yaml.FullLoader)
     with open(env_cfg_path, "r", encoding="utf-8") as file:
         env_args = yaml.load(file, Loader=yaml.FullLoader)
+
+    # 应用环境配置中的算法参数覆盖
+    overrides = env_args.pop("algo_overrides", None)
+    if overrides:
+        _deep_update(algo_args, overrides)
+
     return algo_args, env_args
 
 

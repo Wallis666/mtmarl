@@ -1,4 +1,4 @@
-# 多任务环境（MaMuJoCo）默认配置
+# HalfCheetah 场景配置
 
 # 场景名称
 scenario: HalfCheetah
