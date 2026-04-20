@@ -55,6 +55,13 @@ def main():
         help="环境名称",
     )
     parser.add_argument(
+        "--scenario",
+        type=str,
+        required=True,
+        help="场景名称，用于加载环境子配置文件，"
+        "如 cheetah、humanoid",
+    )
+    parser.add_argument(
         "--exp_name",
         type=str,
         default="render",
@@ -96,7 +103,7 @@ def main():
 
     # 加载 yaml 默认配置
     algo_args, env_args = get_defaults_yaml_args(
-        args.algo, args.env
+        args.algo, args.env, args.scenario,
     )
 
     # 解析额外的 --key value 参数

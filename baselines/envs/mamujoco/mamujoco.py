@@ -85,13 +85,41 @@ class MaMuJoCoEnv:
         self.n_agents = len(self._agents)
 
         # 构建空间列表，按智能体索引访问
-        self.observation_space = [
+        raw_obs_spaces = [
             self._env.observation_space(agent)
             for agent in self._agents
         ]
-        self.action_space = [
+        raw_act_spaces = [
             self._env.action_space(agent)
             for agent in self._agents
+        ]
+
+        # 异构空间处理: 将观测和动作补零对齐到最大维度，
+        # 使数组可以拼成 (n_agents, max_dim) 齐整形状
+        obs_dims = [s.shape[0] for s in raw_obs_spaces]
+        act_dims = [s.shape[0] for s in raw_act_spaces]
+        self._max_obs_dim = max(obs_dims)
+        self._max_act_dim = max(act_dims)
+        self._obs_dims = obs_dims
+        self._act_dims = act_dims
+
+        self.observation_space = [
+            spaces.Box(
+                low=-np.inf,
+                high=np.inf,
+                shape=(self._max_obs_dim,),
+                dtype=np.float64,
+            )
+            for _ in range(self.n_agents)
+        ]
+        self.action_space = [
+            spaces.Box(
+                low=raw_act_spaces[0].low[0],
+                high=raw_act_spaces[0].high[0],
+                shape=(self._max_act_dim,),
+                dtype=raw_act_spaces[0].dtype,
+            )
+            for _ in range(self.n_agents)
         ]
 
         # 共享观测空间: 使用底层 MuJoCo 完整状态
@@ -167,10 +195,11 @@ class MaMuJoCoEnv:
             (obs, share_obs, rewards, dones, infos,
              available_actions) 六元组。
         """
-        # 数组动作 → 字典动作
+        # 数组动作 → 字典动作（截取各智能体实际动作维度）
         action_dict = {
             agent: np.asarray(
-                actions[i], dtype=np.float32,
+                actions[i][:self._act_dims[i]],
+                dtype=np.float32,
             )
             for i, agent in enumerate(self._agents)
         }
@@ -292,16 +321,22 @@ class MaMuJoCoEnv:
         """
         将智能体字典观测转换为数组。
 
+        当各智能体观测维度不同时，自动补零对齐到最大维度。
+
         参数:
             obs_dict: 键为智能体名称的观测字典。
 
         返回:
-            (n_agents, obs_dim) 的观测数组。
+            (n_agents, max_obs_dim) 的观测数组。
         """
-        return np.array(
-            [obs_dict[agent] for agent in self._agents],
+        padded = np.zeros(
+            (self.n_agents, self._max_obs_dim),
             dtype=np.float32,
         )
+        for i, agent in enumerate(self._agents):
+            obs = obs_dict[agent]
+            padded[i, :len(obs)] = obs
+        return padded
 
     def _build_share_obs(self) -> np.ndarray:
         """
