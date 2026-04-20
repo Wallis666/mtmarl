@@ -31,6 +31,10 @@ class CommonConfig:
     stand_height: float = 0.6
     # 站立高度上界（米）
     stand_height_upper: float = 2.0
+    # 健康俯仰角下界（弧度），超出后终止 episode
+    healthy_pitch_low: float = float(np.deg2rad(-10))
+    # 健康俯仰角上界（弧度），超出后终止 episode
+    healthy_pitch_high: float = float(np.deg2rad(20))
 
 
 @dataclass(frozen=True)
@@ -47,10 +51,6 @@ class HopConfig:
 
     # 目标水平速度（m/s）
     speed: float = 2.0
-    # 躯干俯仰角容许下界，向前跳时允许适度前倾
-    upright_pitch_low: float = float(np.deg2rad(-10))
-    # 躯干俯仰角容许上界，限制后仰幅度
-    upright_pitch_high: float = float(np.deg2rad(20))
 
 
 # 全局默认配置实例
@@ -102,7 +102,10 @@ class HopperMultiTask(MultiAgentMujocoEnv):
             agent_conf=agent_conf,
             agent_obsk=agent_obsk,
             render_mode=render_mode,
-            terminate_when_unhealthy=False,
+            healthy_angle_range=(
+                _COMMON.healthy_pitch_low,
+                _COMMON.healthy_pitch_high,
+            ),
             **kwargs,
         )
 
@@ -352,25 +355,6 @@ class HopperMultiTask(MultiAgentMujocoEnv):
 
         return standing * small_control
 
-    def _upright_reward(self) -> float:
-        """
-        躯干直立姿态奖励。
-
-        俯仰角在 [-10°, +20°] 以内时返回 1，超出后
-        立即返回 0；向前跳时允许适度前倾（-10°），
-        但限制后仰幅度（+20°）。
-
-        返回:
-            0 或 1。
-        """
-        return tolerance(
-            self._get_torso_pitch(),
-            bounds=(
-                _HOP.upright_pitch_low,
-                _HOP.upright_pitch_high,
-            ),
-        )
-
     def _hop_reward(
         self,
         infos: dict[str, dict],
@@ -378,12 +362,11 @@ class HopperMultiTask(MultiAgentMujocoEnv):
         """
         跳跃奖励。
 
-        综合三个子奖励:
+        综合两个子奖励:
             - standing: torso 相对 foot 高度在
                 目标范围内时满分
-            - upright: 俯仰角在 ±20° 内时满分，
-                超出后归零
             - hopping: 沿 x 正方向达到目标速度
+        姿态约束由 _fell_out_of_posture 兜底终止处理。
 
         参数:
             infos: 环境 step 返回的信息字典。
@@ -403,8 +386,9 @@ class HopperMultiTask(MultiAgentMujocoEnv):
         hopping = tolerance(
             vx,
             bounds=(_HOP.speed, float("inf")),
-            margin=_HOP.speed,
+            margin=_HOP.speed / 2,
+            value_at_margin=0.5,
             sigmoid="linear",
         )
 
-        return standing * self._upright_reward() * hopping
+        return standing * hopping
