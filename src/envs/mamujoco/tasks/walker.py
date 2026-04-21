@@ -104,6 +104,7 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
             agent_conf=agent_conf,
             agent_obsk=agent_obsk,
             render_mode=render_mode,
+            reset_noise_scale=0.5,
             **kwargs,
         )
 
