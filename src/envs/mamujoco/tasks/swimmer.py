@@ -37,9 +37,20 @@ class SwimBwdConfig:
     speed: float = 1.5
 
 
+@dataclass(frozen=True)
+class PostureConfig:
+    """游泳姿态约束参数。"""
+
+    # 允许的最大横向速度（m/s），超出后 straight 奖励衰减
+    max_lateral_speed: float = 0.5
+    # 躯干朝向角容许范围（±弧度），在此范围内视为方向正确
+    heading_bound: float = float(np.deg2rad(30))
+
+
 # 全局默认配置实例
 _SWIM_FWD = SwimFwdConfig()
 _SWIM_BWD = SwimBwdConfig()
+_POSTURE = PostureConfig()
 
 
 # ------------------------------------------------------------------
@@ -177,9 +188,15 @@ class SwimmerMultiTask(MultiAgentMujocoEnv):
         # 仅在 human 渲染模式下打印，不影响训练
         if self._render_mode == "human":
             vx = self._get_x_velocity(infos)
+            vy = self._get_y_velocity(infos)
+            heading_deg = float(
+                np.rad2deg(self._get_heading())
+            )
             print(
                 f"\rtask={self.task:<10} "
                 f"v_x={vx:+6.2f}  "
+                f"v_y={vy:+6.2f}  "
+                f"heading={heading_deg:+6.1f}°  "
                 f"r={task_reward:.3f} ",
                 end="",
                 flush=True,
@@ -207,6 +224,89 @@ class SwimmerMultiTask(MultiAgentMujocoEnv):
         # 所有智能体共享同一底层环境，取任意一个即可
         info = next(iter(infos.values()))
         return float(info.get("x_velocity", 0.0))
+
+    def _get_y_velocity(
+        self,
+        infos: dict[str, dict],
+    ) -> float:
+        """
+        从信息字典中提取 y 方向速度。
+
+        参数:
+            infos: 环境 step 返回的信息字典。
+
+        返回:
+            y 方向线速度。
+        """
+        info = next(iter(infos.values()))
+        return float(info.get("y_velocity", 0.0))
+
+    def _get_heading(self) -> float:
+        """
+        获取躯干朝向角（free_body_rot 关节位置）。
+
+        Swimmer 在 x-y 平面运动，qpos[2] 为绕 z 轴的
+        旋转角（弧度），0 表示朝向 x 正方向。
+
+        返回:
+            躯干朝向角（弧度）。
+        """
+        return float(
+            self.single_agent_env.unwrapped.data.qpos[2]
+        )
+
+    # ------------------------------------------------------------------
+    # 姿态约束子奖励
+    # ------------------------------------------------------------------
+
+    def _straight_reward(
+        self,
+        infos: dict[str, dict],
+    ) -> float:
+        """
+        直线游泳子奖励。
+
+        惩罚横向速度，鼓励沿 x 轴直线运动，避免偏航漂移。
+        y 方向速度在 ±max_lateral_speed 内满分，超出后
+        线性衰减至 0。
+
+        参数:
+            infos: 环境 step 返回的信息字典。
+
+        返回:
+            [0, 1] 区间内的奖励值。
+        """
+        vy = self._get_y_velocity(infos)
+        return tolerance(
+            vy,
+            bounds=(
+                -_POSTURE.max_lateral_speed,
+                _POSTURE.max_lateral_speed,
+            ),
+            margin=_POSTURE.max_lateral_speed,
+            value_at_margin=0,
+            sigmoid="linear",
+        )
+
+    def _heading_reward(self) -> float:
+        """
+        朝向稳定子奖励。
+
+        惩罚躯干旋转角偏离 0（即偏离 x 轴方向），鼓励
+        身体始终朝向运动方向，避免打转或蛇形偏摆过大。
+        朝向角在 ±30° 内满分，超出后高斯衰减。
+
+        返回:
+            [0, 1] 区间内的奖励值。
+        """
+        heading = self._get_heading()
+        return tolerance(
+            heading,
+            bounds=(
+                -_POSTURE.heading_bound,
+                _POSTURE.heading_bound,
+            ),
+        )
 
     # ------------------------------------------------------------------
     # 奖励分发
@@ -249,7 +349,10 @@ class SwimmerMultiTask(MultiAgentMujocoEnv):
         """
         正向游泳奖励。
 
-        鼓励智能体沿 x 正方向达到目标速度。
+        综合三个子奖励:
+            - speed: 沿 x 正方向达到目标速度
+            - straight: 横向速度接近零，保持直线
+            - heading: 躯干朝向稳定，不偏摆
 
         参数:
             infos: 环境 step 返回的信息字典。
@@ -258,12 +361,17 @@ class SwimmerMultiTask(MultiAgentMujocoEnv):
             [0, 1] 区间内的奖励值。
         """
         speed = self._get_x_velocity(infos)
-        return tolerance(
+        speed_reward = tolerance(
             speed,
             bounds=(_SWIM_FWD.speed, float("inf")),
             margin=_SWIM_FWD.speed,
             value_at_margin=0,
             sigmoid="linear",
+        )
+        return (
+            speed_reward
+            * self._straight_reward(infos)
+            * self._heading_reward()
         )
 
     def _swim_bwd_reward(
@@ -273,7 +381,10 @@ class SwimmerMultiTask(MultiAgentMujocoEnv):
         """
         反向游泳奖励。
 
-        鼓励智能体沿 x 负方向达到目标速度。
+        综合三个子奖励:
+            - speed: 沿 x 负方向达到目标速度
+            - straight: 横向速度接近零，保持直线
+            - heading: 躯干朝向稳定，不偏摆
 
         参数:
             infos: 环境 step 返回的信息字典。
@@ -282,10 +393,15 @@ class SwimmerMultiTask(MultiAgentMujocoEnv):
             [0, 1] 区间内的奖励值。
         """
         speed = self._get_x_velocity(infos)
-        return tolerance(
+        speed_reward = tolerance(
             speed,
             bounds=(-float("inf"), -_SWIM_BWD.speed),
             margin=_SWIM_BWD.speed,
             value_at_margin=0,
             sigmoid="linear",
+        )
+        return (
+            speed_reward
+            * self._straight_reward(infos)
+            * self._heading_reward()
         )
