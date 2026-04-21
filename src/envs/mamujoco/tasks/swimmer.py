@@ -418,10 +418,14 @@ class SwimmerMultiTask(MultiAgentMujocoEnv):
         """
         反向游泳奖励。
 
-        综合三个子奖励:
+        综合两个子奖励:
             - speed: 沿 x 负方向达到目标速度
             - straight: 横向速度接近零，保持直线
-            - tail_heading: 尾部朝向稳定，头部摆动提供动力
+
+        不约束朝向角：tail heading 包含两个执行器的关节角，
+        约束它会直接压制关节运动；head heading 在反向游时
+        振幅较大，约束它会阻碍反向行波的形成。
+        仅通过 straight（y 方向速度）保证直线性。
 
         参数:
             infos: 环境 step 返回的信息字典。
@@ -437,8 +441,4 @@ class SwimmerMultiTask(MultiAgentMujocoEnv):
             value_at_margin=0,
             sigmoid="linear",
         )
-        return (
-            speed_reward
-            * self._straight_reward(infos)
-            * self._tail_heading_reward()
-        )
+        return speed_reward * self._straight_reward(infos)
