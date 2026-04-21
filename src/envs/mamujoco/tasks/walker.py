@@ -26,20 +26,8 @@ from src.utils.reward import tolerance
 class CommonConfig:
     """各任务共用参数。"""
 
-    # 站立时躯干最低高度（米），qpos[1] 应高于此值
+    # 站立时躯干最低高度（米），用于站立基底子奖励
     stand_height: float = 1.2
-    # 站立/行走时直立容许角度偏差（弧度），约 15°
-    upright_angle_bound: float = float(np.deg2rad(15))
-    # 动作惩罚 margin
-    control_margin: float = 1.0
-
-
-@dataclass(frozen=True)
-class StandConfig:
-    """站立任务参数。"""
-
-    # 水平速度惩罚 margin（m/s），鼓励静止
-    velocity_margin: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -48,8 +36,6 @@ class WalkConfig:
 
     # 目标行走速度（m/s）
     speed: float = 1.5
-    # 行走时躯干最低高度（米），略低于站立
-    min_height: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -58,18 +44,23 @@ class RunConfig:
 
     # 目标奔跑速度（m/s）
     speed: float = 6.0
-    # 奔跑时躯干最低高度（米），允许飞行相高度波动
-    min_height: float = 0.9
-    # 奔跑时直立容许角度（弧度），约 20°，
-    # 比行走略宽松，允许自然前倾
-    upright_angle_bound: float = float(np.deg2rad(20))
+
+
+@dataclass(frozen=True)
+class GaitConfig:
+    """步态交替参数。"""
+
+    # cfrc_ext 力范数阈值，超过此值判定为着地
+    contact_threshold: float = 1.0
+    # EMA 衰减率，越大越关注近期接触历史
+    ema_alpha: float = 0.1
 
 
 # 全局默认配置实例
 _COMMON = CommonConfig()
-_STAND = StandConfig()
 _WALK = WalkConfig()
 _RUN = RunConfig()
+_GAIT = GaitConfig()
 
 
 class Walker2dMultiTask(MultiAgentMujocoEnv):
@@ -80,9 +71,10 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
     并在 step 中用当前任务的自定义奖励替换默认奖励。
     各智能体在同一时间步共享相同的任务奖励信号。
 
-    奖励设计均以躯干直立和高度为基础约束，确保
-    智能体在行走和奔跑时保持类人姿态，避免
-    以爬行、滑行或翻转等非自然方式完成运动任务。
+    奖励设计以站立基底子奖励（高度 + 竖直）为核心，
+    运动任务在此基础上乘以速度因子和步态交替因子。
+    步态因子通过左右脚接触的指数移动平均跟踪双脚
+    使用对称性，防止智能体退化为单脚跳。
 
     支持的任务集:
         - stand: 站立保持平衡
@@ -130,6 +122,21 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
 
         self._render_mode = render_mode
         self._task_idx: int = 0
+
+        # 缓存左右脚 body id，避免每步查找
+        env = self.single_agent_env.unwrapped
+        self._foot_id: int = env.model.body(
+            "foot"
+        ).id
+        self._foot_left_id: int = env.model.body(
+            "foot_left"
+        ).id
+
+        # 步态追踪: 左右脚接触的指数移动平均，
+        # 初始 0.5 表示双脚均匀使用（中性假设）
+        self._foot_ema: NDArray = np.array(
+            [0.5, 0.5]
+        )
 
     # ------------------------------------------------------------------
     # 任务属性
@@ -184,8 +191,29 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
             self._task_idx = int(task)
 
     # ------------------------------------------------------------------
-    # 重写 step：替换奖励
+    # 重写 reset / step
     # ------------------------------------------------------------------
+
+    def reset(
+        self,
+        seed: int | None = None,
+        options: dict | None = None,
+    ) -> tuple[dict[str, NDArray], dict[str, dict]]:
+        """
+        重置环境并初始化步态追踪状态。
+
+        参数:
+            seed: 随机种子。
+            options: 重置选项。
+
+        返回:
+            (观测, 信息) 二元组。
+        """
+        result = super().reset(
+            seed=seed, options=options,
+        )
+        self._foot_ema = np.array([0.5, 0.5])
+        return result
 
     def step(
         self,
@@ -207,22 +235,24 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
             (观测, 奖励, 终止, 截断, 信息) 五元组。
         """
         obs, _, terms, truncs, infos = super().step(actions)
+
+        # 更新步态追踪（在计算奖励之前）
+        self._update_foot_ema()
+
         task_reward = self._compute_reward(infos)
         rewards = {agent: task_reward for agent in obs}
         # 仅在 human 渲染模式下打印，不影响训练
         if self._render_mode == "human":
             vx = self._get_x_velocity(infos)
             height = self._get_torso_height()
-            pitch_deg = float(
-                np.rad2deg(self._get_torso_pitch())
-            )
-            ctrl = self._get_control_magnitude()
+            upright = self._get_torso_upright()
+            gait = self._gait_reward()
             print(
                 f"\rtask={self.task:<10} "
                 f"v_x={vx:+6.2f}  "
                 f"height={height:.2f}  "
-                f"pitch={pitch_deg:+6.1f}°  "
-                f"ctrl={ctrl:.2f}  "
+                f"upright={upright:+.2f}  "
+                f"gait={gait:.2f}  "
                 f"r={task_reward:.3f} ",
                 end="",
                 flush=True,
@@ -277,91 +307,111 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
             self.single_agent_env.unwrapped.data.qpos[2]
         )
 
-    def _get_control_magnitude(self) -> float:
+    def _get_torso_upright(self) -> float:
         """
-        获取当前动作信号的平均绝对值。
+        获取躯干的竖直程度。
+
+        通过 cos(pitch) 计算，等效于 torso 旋转矩阵
+        的 zz 分量: 1 表示完全竖直，0 表示水平，
+        -1 表示倒立。
 
         返回:
-            控制信号的均值幅度。
+            [-1, 1] 区间内的竖直程度值。
         """
-        ctrl = self.single_agent_env.unwrapped.data.ctrl
-        return float(np.mean(np.abs(ctrl)))
+        return float(np.cos(self._get_torso_pitch()))
+
+    # ------------------------------------------------------------------
+    # 步态追踪
+    # ------------------------------------------------------------------
+
+    def _get_foot_contacts(self) -> tuple[bool, bool]:
+        """
+        检测左右脚是否着地。
+
+        通过 cfrc_ext 的力范数判定接触:
+        范数超过阈值视为该脚正在承受地面反力。
+
+        返回:
+            (右脚着地, 左脚着地) 布尔元组。
+        """
+        ext = self.single_agent_env.unwrapped.data.cfrc_ext
+        right = float(np.linalg.norm(
+            ext[self._foot_id]
+        ))
+        left = float(np.linalg.norm(
+            ext[self._foot_left_id]
+        ))
+        th = _GAIT.contact_threshold
+        return right > th, left > th
+
+    def _update_foot_ema(self) -> None:
+        """
+        更新左右脚接触的指数移动平均。
+
+        每步将当前接触状态（0/1）混入 EMA，
+        跟踪近期各脚的使用频率。
+        """
+        right, left = self._get_foot_contacts()
+        a = _GAIT.ema_alpha
+        self._foot_ema[0] = (
+            (1 - a) * self._foot_ema[0]
+            + a * float(right)
+        )
+        self._foot_ema[1] = (
+            (1 - a) * self._foot_ema[1]
+            + a * float(left)
+        )
+
+    def _gait_reward(self) -> float:
+        """
+        步态交替子奖励。
+
+        计算左右脚 EMA 的对称比:
+            min(ema) / max(ema)
+        双脚交替使用时接近 1，单脚跳时接近 0。
+        双脚均无明显接触（如静止站立初期 EMA
+        自然衰减）时返回 1，不施加惩罚。
+
+        返回:
+            [0, 1] 区间内的奖励值。
+        """
+        ema_max = float(max(
+            self._foot_ema[0], self._foot_ema[1],
+        ))
+        if ema_max < 0.05:
+            return 1.0
+        ema_min = float(min(
+            self._foot_ema[0], self._foot_ema[1],
+        ))
+        return ema_min / ema_max
 
     # ------------------------------------------------------------------
     # 共用子奖励
     # ------------------------------------------------------------------
 
-    def _upright_reward(
-        self,
-        angle_bound: float = _COMMON.upright_angle_bound,
-    ) -> float:
+    def _standing_reward(self) -> float:
         """
-        躯干直立子奖励。
+        站立基底子奖励（各任务共用）。
 
-        俯仰角在 [-angle_bound, +angle_bound] 内时
-        返回 1，超出后线性衰减至 0；确保智能体在
-        运动时保持类人直立姿态，而非以爬行、滑行
-        或翻转等非自然方式运动。
-
-        参数:
-            angle_bound: 直立容许角度偏差上界（弧度）。
+        综合 torso 高度和竖直程度两个信号:
+            - standing: torso 高度 >= 1.2m 时满分，
+                低于时 gaussian 衰减
+            - upright: 竖直程度映射到 [0, 1]
+        加权求和: (3 * standing + upright) / 4，
+        高度权重更大因其对站立稳定性更关键。
 
         返回:
             [0, 1] 区间内的奖励值。
         """
-        return tolerance(
-            self._get_torso_pitch(),
-            bounds=(-angle_bound, angle_bound),
-            margin=angle_bound,
-            value_at_margin=0,
-            sigmoid="linear",
-        )
-
-    def _height_reward(
-        self,
-        min_height: float = _COMMON.stand_height,
-    ) -> float:
-        """
-        躯干高度子奖励。
-
-        躯干高度达到 min_height 时返回 1，低于时
-        gaussian 衰减，防止爬行或蹲伏运动。
-
-        参数:
-            min_height: 最低目标高度（米）。
-
-        返回:
-            [0, 1] 区间内的奖励值。
-        """
-        return tolerance(
+        standing = tolerance(
             self._get_torso_height(),
-            bounds=(min_height, float("inf")),
-            margin=min_height / 4,
+            bounds=(
+                _COMMON.stand_height, float("inf"),
+            ),
+            margin=_COMMON.stand_height / 2,
         )
-
-    def _small_control_reward(self) -> float:
-        """
-        动作平滑子奖励。
-
-        对每个执行器的控制信号用 quadratic sigmoid
-        衰减，取均值后压缩到 [0.8, 1.0] 区间，
-        避免主导奖励但能有效抑制高频震颤，
-        鼓励自然协调的运动模式。
-
-        返回:
-            [0.8, 1.0] 区间内的奖励值。
-        """
-        ctrl = self.single_agent_env.unwrapped.data.ctrl
-        raw = float(
-            tolerance(
-                ctrl,
-                margin=_COMMON.control_margin,
-                value_at_margin=0,
-                sigmoid="quadratic",
-            ).mean()
-        )
-        # 压缩到 [0.8, 1.0]，避免惩罚过重
-        return (4 + raw) / 5
+        upright = (1 + self._get_torso_upright()) / 2
+        return (3 * standing + upright) / 4
 
     # ------------------------------------------------------------------
     # 奖励分发
@@ -385,7 +435,7 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         """
         task = self.task
         if task == "stand":
-            return self._stand_reward(infos)
+            return self._stand_reward()
         elif task == "walk_fwd":
             return self._walk_fwd_reward(infos)
         elif task == "walk_bwd":
@@ -403,43 +453,18 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
     # 各任务奖励函数
     # ------------------------------------------------------------------
 
-    def _stand_reward(
-        self,
-        infos: dict[str, dict],
-    ) -> float:
+    def _stand_reward(self) -> float:
         """
         站立奖励。
 
-        综合四个子奖励:
-            - upright: 躯干保持竖直（±15° 内满分）
-            - height: 躯干高度 >= 1.2m
-            - small_control: 动作平滑，抑制震颤
-            - dont_move: 水平速度接近零，鼓励静止
-
-        参数:
-            infos: 环境 step 返回的信息字典。
+        直接使用站立基底子奖励，要求躯干高度
+        达标且保持竖直姿态。不乘步态因子，
+        因为站立不要求双脚交替。
 
         返回:
             [0, 1] 区间内的奖励值。
         """
-        vx = self._get_x_velocity(infos)
-        dont_move = tolerance(
-            vx,
-            bounds=(
-                -_STAND.velocity_margin,
-                _STAND.velocity_margin,
-            ),
-            margin=_STAND.velocity_margin,
-            value_at_margin=0,
-            sigmoid="linear",
-        )
-
-        return (
-            self._upright_reward()
-            * self._height_reward()
-            * self._small_control_reward()
-            * dont_move
-        )
+        return self._standing_reward()
 
     def _walk_fwd_reward(
         self,
@@ -448,14 +473,13 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         """
         正向行走奖励。
 
-        综合四个子奖励:
-            - upright: 躯干保持竖直（±15° 内满分），
-                确保以类人直立姿态行走
-            - height: 躯干高度 >= 1.0m，防止蹲伏
-            - small_control: 动作平滑，鼓励自然步态
-            - move: 沿 x 正方向达到 1.5m/s 目标速度，
-                压缩到 [1/6, 1] 保证速度不够时仍有
-                站立激励
+        在站立基底上乘以速度因子和步态因子:
+            - standing: 高度 + 竖直基底
+            - move: 沿 x 正方向达到目标速度，
+                压缩到 [1/6, 1] 保证速度不够时
+                仍有站立激励
+            - gait: 双脚交替使用的对称比，
+                防止退化为单脚跳
 
         参数:
             infos: 环境 step 返回的信息字典。
@@ -467,18 +491,14 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         move = tolerance(
             vx,
             bounds=(_WALK.speed, float("inf")),
-            margin=_WALK.speed,
-            value_at_margin=0,
+            margin=_WALK.speed / 2,
+            value_at_margin=0.5,
             sigmoid="linear",
         )
-        # 压缩到 [1/6, 1]，速度为零时仍有站立激励
-        move = (5 * move + 1) / 6
-
         return (
-            self._upright_reward()
-            * self._height_reward(_WALK.min_height)
-            * self._small_control_reward()
-            * move
+            self._standing_reward()
+            * (5 * move + 1) / 6
+            * self._gait_reward()
         )
 
     def _walk_bwd_reward(
@@ -488,11 +508,10 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         """
         反向行走奖励。
 
-        综合四个子奖励:
-            - upright: 躯干保持竖直（±15° 内满分）
-            - height: 躯干高度 >= 1.0m
-            - small_control: 动作平滑
-            - move: 沿 x 负方向达到 1.5m/s 目标速度
+        在站立基底上乘以速度因子和步态因子:
+            - standing: 高度 + 竖直基底
+            - move: 沿 x 负方向达到目标速度
+            - gait: 双脚交替使用的对称比
 
         参数:
             infos: 环境 step 返回的信息字典。
@@ -504,17 +523,14 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         move = tolerance(
             vx,
             bounds=(-float("inf"), -_WALK.speed),
-            margin=_WALK.speed,
-            value_at_margin=0,
+            margin=_WALK.speed / 2,
+            value_at_margin=0.5,
             sigmoid="linear",
         )
-        move = (5 * move + 1) / 6
-
         return (
-            self._upright_reward()
-            * self._height_reward(_WALK.min_height)
-            * self._small_control_reward()
-            * move
+            self._standing_reward()
+            * (5 * move + 1) / 6
+            * self._gait_reward()
         )
 
     def _run_fwd_reward(
@@ -524,13 +540,10 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         """
         正向奔跑奖励。
 
-        综合四个子奖励:
-            - upright: 躯干保持竖直（±20° 内满分），
-                比行走略宽松，允许自然前倾
-            - height: 躯干高度 >= 0.9m，允许飞行相
-                时的高度波动
-            - small_control: 动作平滑
-            - move: 沿 x 正方向达到 6.0m/s 目标速度
+        在站立基底上乘以速度因子和步态因子:
+            - standing: 高度 + 竖直基底
+            - move: 沿 x 正方向达到目标速度
+            - gait: 双脚交替使用的对称比
 
         参数:
             infos: 环境 step 返回的信息字典。
@@ -542,19 +555,14 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         move = tolerance(
             vx,
             bounds=(_RUN.speed, float("inf")),
-            margin=_RUN.speed,
-            value_at_margin=0,
+            margin=_RUN.speed / 2,
+            value_at_margin=0.5,
             sigmoid="linear",
         )
-        move = (5 * move + 1) / 6
-
         return (
-            self._upright_reward(
-                _RUN.upright_angle_bound,
-            )
-            * self._height_reward(_RUN.min_height)
-            * self._small_control_reward()
-            * move
+            self._standing_reward()
+            * (5 * move + 1) / 6
+            * self._gait_reward()
         )
 
     def _run_bwd_reward(
@@ -564,11 +572,10 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         """
         反向奔跑奖励。
 
-        综合四个子奖励:
-            - upright: 躯干保持竖直（±20° 内满分）
-            - height: 躯干高度 >= 0.9m
-            - small_control: 动作平滑
-            - move: 沿 x 负方向达到 6.0m/s 目标速度
+        在站立基底上乘以速度因子和步态因子:
+            - standing: 高度 + 竖直基底
+            - move: 沿 x 负方向达到目标速度
+            - gait: 双脚交替使用的对称比
 
         参数:
             infos: 环境 step 返回的信息字典。
@@ -580,17 +587,12 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         move = tolerance(
             vx,
             bounds=(-float("inf"), -_RUN.speed),
-            margin=_RUN.speed,
-            value_at_margin=0,
+            margin=_RUN.speed / 2,
+            value_at_margin=0.5,
             sigmoid="linear",
         )
-        move = (5 * move + 1) / 6
-
         return (
-            self._upright_reward(
-                _RUN.upright_angle_bound,
-            )
-            * self._height_reward(_RUN.min_height)
-            * self._small_control_reward()
-            * move
+            self._standing_reward()
+            * (5 * move + 1) / 6
+            * self._gait_reward()
         )
