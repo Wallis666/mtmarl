@@ -39,6 +39,9 @@ class PostureConfig:
     pelvis_factor: float = 0.6
     # 摔倒判定: torso 高度下界（米），低于则终止
     fall_height: float = 1.0
+    # 摔倒判定: 躯干直立下界（up.z），低于则终止
+    # 0.7 ≈ arccos(0.7) ≈ 45.6°，倾斜超过约 46° 终止
+    fall_upright: float = 0.7
 
 
 @dataclass(frozen=True)
@@ -98,11 +101,6 @@ _ENERGY = EnergyConfig()
 _STAND = StandConfig()
 _WALK = WalkConfig()
 _RUN = RunConfig()
-
-
-# ------------------------------------------------------------------
-# 环境类
-# ------------------------------------------------------------------
 
 
 class HumanoidMultiTask(MultiAgentMujocoEnv):
@@ -449,8 +447,9 @@ class HumanoidMultiTask(MultiAgentMujocoEnv):
         """
         判断是否摔倒。
 
-        当 torso 高度低于 fall_height 时视为摔倒，
-        提前终止 episode。
+        满足以下任一条件视为摔倒，提前终止 episode:
+            - torso 高度低于 fall_height
+            - 躯干倾斜度低于 fall_upright（约 46°）
 
         返回:
             True 表示应提前终止。
@@ -458,6 +457,8 @@ class HumanoidMultiTask(MultiAgentMujocoEnv):
         return (
             self._get_body_z("torso")
             < _POSTURE.fall_height
+            or self._get_body_up_z("torso")
+            < _POSTURE.fall_upright
         )
 
     # ------------------------------------------------------------------
