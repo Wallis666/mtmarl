@@ -2,8 +2,7 @@
 Humanoid 多任务多智能体环境模块。
 
 基于 gymnasium_robotics MaMuJoCo 的 MultiAgentMujocoEnv 派生，
-提供 stand、walk、run 任务的自定义奖励函数，支持在任务间
-动态切换。
+提供 stand、walk、run 任务的自定义奖励函数，支持在任务间动态切换。
 """
 
 from dataclasses import dataclass
@@ -27,7 +26,9 @@ class PostureConfig:
     """姿态奖励参数。"""
 
     # 标准站立时的头部高度（米）
-    stand_height: float = 1.6
+    stand_height: float = 1.4
+    # 头部高度因子（× stand_height 为下界）
+    head_factor: float = 0.95
     # 头部高度奖励 margin（米）
     head_margin: float = 0.5
     # 躯干直立下界（up 向量的 z 分量）
@@ -87,7 +88,7 @@ class RunConfig:
     """奔跑任务参数。"""
 
     # 目标速度（m/s）
-    speed: float = 10.0
+    speed: float = 8.0
 
 
 # 全局默认配置实例
@@ -475,11 +476,12 @@ class HumanoidMultiTask(MultiAgentMujocoEnv):
         返回:
             [0, 1] 区间内的奖励值。
         """
-        # 头部高度 ≥ stand_height * 0.95 时满分
+        # 头部高度 ≥ stand_height * head_factor 时满分
         standing = tolerance(
             self._get_geom_z("head"),
             bounds=(
-                _POSTURE.stand_height * 0.95,
+                _POSTURE.stand_height
+                * _POSTURE.head_factor,
                 float("inf"),
             ),
             margin=_POSTURE.head_margin,
