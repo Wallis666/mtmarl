@@ -27,7 +27,7 @@ class ReachConfig:
 
     # 到达半径倍率：reach_radius * (指尖半径 + 目标半径)
     # 为实际判定"到达"的距离阈值
-    reach_radius: float = 1.0
+    reach_radius: float = 0.5
     # margin 倍率：margin_factor * 到达阈值，控制奖励
     # 在阈值之外的线性衰减斜率
     margin_factor: float = 20.0

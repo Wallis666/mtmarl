@@ -9,7 +9,7 @@ agent_obsk: 1
 # 初始任务: reach
 task: reach
 # 单回合最大步数
-episode_limit: 1000
+episode_limit: 50
 # 渲染模式: null / "human" / "rgb_array"
 # 训练时保持 null；回放时通过 --render_mode human 覆盖
 render_mode: ~
