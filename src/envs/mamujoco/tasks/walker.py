@@ -626,20 +626,26 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         """
         行走奖励。
 
-        综合六个子奖励:
-            - speed: 沿 x 正方向达到目标速度 1.0 m/s
-            - height: 躯干高度保持在目标范围内
-            - upright: 躯干保持直立姿态
-            - alternation: 接触交替奖励，鼓励一脚支撑
-                一脚摆动的正常步态
-            - foot_usage: 双脚使用率，惩罚长期只用
-                一只脚的拖行行为
-            - smooth: 动作平滑，减少关节抖动
+        采用"姿态基础分 + 运动奖励"的分层结构，确保
+        训练初期智能体即使尚未学会前进也能从站稳中
+        获得非零梯度信号，避免稀疏奖励死锁。
 
-        乘法组合确保智能体必须同时满足所有约束:
-        仅跑快但姿态不稳不会获得高分，
-        仅站稳但不前进也不会获得高分，
-        只用一只脚拖行也不会获得高分。
+        结构:
+            posture = height × upright（站稳即有分）
+            locomotion = speed × alternation × foot_usage
+                （正确走路才有分）
+            smooth 作为全局调制因子
+
+            总奖励 = (0.2 × posture + 0.8 × locomotion)
+                × smooth
+
+        训练过程的隐式课程:
+            1. 初期 speed≈0: 奖励 ≈ 0.2 × posture，
+               智能体先学会站稳
+            2. 中期开始前进: locomotion 逐渐贡献，
+               奖励上升
+            3. 后期步态成熟: alternation 和 foot_usage
+               精调步态质量
 
         参数:
             infos: 环境 step 返回的信息字典。
@@ -661,13 +667,15 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         foot_usage = self._foot_usage_reward()
         smooth = self._action_smoothness_reward()
 
-        # 平滑奖励压缩至 [0.8, 1.0]，作为辅助约束
+        # 平滑奖励压缩至 [0.8, 1.0]，作为全局调制
         smooth = (4 + smooth) / 5
 
-        return (
-            speed * height * upright
-            * alternation * foot_usage * smooth
-        )
+        # 姿态基础分: 站稳即可获得，提供初始梯度
+        posture = height * upright
+        # 运动奖励: 速度 × 步态质量，鼓励正确行走
+        locomotion = speed * alternation * foot_usage
+
+        return (0.2 * posture + 0.8 * locomotion) * smooth
 
     def _run_reward(
         self,
@@ -676,13 +684,13 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         """
         奔跑奖励。
 
-        综合三个子奖励:
-            - speed: 沿 x 正方向达到目标速度 5.0 m/s
-            - height: 躯干高度保持在目标范围内
-            - upright: 躯干保持直立姿态
+        与 walk 相同的分层结构，但不强加步态约束，
+        允许智能体自由探索高效奔跑策略。
 
-        奔跑任务不强加步态对称性约束，允许智能体自由
-        探索高效的奔跑步态（包括跳跃式奔跑）。
+        结构:
+            posture = height × upright
+            locomotion = speed
+            总奖励 = 0.2 × posture + 0.8 × locomotion
 
         参数:
             infos: 环境 step 返回的信息字典。
@@ -701,4 +709,5 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         height = self._height_reward()
         upright = self._upright_reward()
 
-        return speed * height * upright
+        posture = height * upright
+        return 0.2 * posture + 0.8 * speed
