@@ -626,26 +626,22 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         """
         行走奖励。
 
-        采用"姿态基础分 + 运动奖励"的分层结构，确保
-        训练初期智能体即使尚未学会前进也能从站稳中
-        获得非零梯度信号，避免稀疏奖励死锁。
+        四项加权求和，每项独立提供梯度信号:
+            - posture (权重 0.15): height × upright，
+                站稳即可获得
+            - speed (权重 0.45): gaussian 衰减的速度跟踪，
+                vx=0 时仍有 ~0.04 的非零值
+            - gait (权重 0.25): alternation × foot_usage，
+                交替步态质量
+            - smooth (权重 0.15): 动作平滑度
 
-        结构:
-            posture = height × upright（站稳即有分）
-            locomotion = speed × alternation × foot_usage
-                （正确走路才有分）
-            smooth 作为全局调制因子
+        使用加法而非乘法: 各项独立贡献梯度，不会因
+        某一项为零导致整体梯度消失。
 
-            总奖励 = (0.2 × posture + 0.8 × locomotion)
-                × smooth
-
-        训练过程的隐式课程:
-            1. 初期 speed≈0: 奖励 ≈ 0.2 × posture，
-               智能体先学会站稳
-            2. 中期开始前进: locomotion 逐渐贡献，
-               奖励上升
-            3. 后期步态成熟: alternation 和 foot_usage
-               精调步态质量
+        速度使用 gaussian sigmoid（参考 rewards.py 中
+        calc_fwd_vel_reward 的 exp(-10·e²) 设计）:
+        vx=0 时 speed≈0.04，vx=0.5 时 speed≈0.29，
+        始终有非零梯度推动智能体加速。
 
         参数:
             infos: 环境 step 返回的信息字典。
@@ -654,12 +650,13 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
             [0, 1] 区间内的奖励值。
         """
         vx = self._get_x_velocity(infos)
+        # gaussian sigmoid: vx=0 → ~0.04, vx=0.5 → ~0.29,
+        # vx=1.0 → 1.0，始终有梯度
         speed = tolerance(
             vx,
             bounds=(_WALK.speed, float("inf")),
             margin=_WALK.speed,
-            value_at_margin=0,
-            sigmoid="linear",
+            sigmoid="gaussian",
         )
         height = self._height_reward()
         upright = self._upright_reward()
@@ -667,15 +664,15 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         foot_usage = self._foot_usage_reward()
         smooth = self._action_smoothness_reward()
 
-        # 平滑奖励压缩至 [0.8, 1.0]，作为全局调制
-        smooth = (4 + smooth) / 5
-
-        # 姿态基础分: 站稳即可获得，提供初始梯度
         posture = height * upright
-        # 运动奖励: 速度 × 步态质量，鼓励正确行走
-        locomotion = speed * alternation * foot_usage
+        gait = alternation * foot_usage
 
-        return (0.2 * posture + 0.8 * locomotion) * smooth
+        return (
+            0.15 * posture
+            + 0.45 * speed
+            + 0.25 * gait
+            + 0.15 * smooth
+        )
 
     def _run_reward(
         self,
@@ -684,13 +681,7 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         """
         奔跑奖励。
 
-        与 walk 相同的分层结构，但不强加步态约束，
-        允许智能体自由探索高效奔跑策略。
-
-        结构:
-            posture = height × upright
-            locomotion = speed
-            总奖励 = 0.2 × posture + 0.8 × locomotion
+        与 walk 结构类似，但不强加步态约束。
 
         参数:
             infos: 环境 step 返回的信息字典。
@@ -703,8 +694,7 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
             vx,
             bounds=(_RUN.speed, float("inf")),
             margin=_RUN.speed,
-            value_at_margin=0,
-            sigmoid="linear",
+            sigmoid="gaussian",
         )
         height = self._height_reward()
         upright = self._upright_reward()
