@@ -2,7 +2,8 @@
 Humanoid 多任务多智能体环境模块。
 
 基于 gymnasium_robotics MaMuJoCo 的 MultiAgentMujocoEnv 派生，
-提供 stand、walk、run 任务的自定义奖励函数，支持在任务间动态切换。
+提供 stand、walk、run 任务的自定义奖励函数，支持在任务间
+动态切换。
 """
 
 from dataclasses import dataclass
@@ -26,8 +27,9 @@ class PostureConfig:
     """姿态奖励参数。"""
 
     # 标准站立时的头部高度（米）
-    stand_height: float = 1.4
-    # 头部高度因子（× stand_height 为下界）
+    # gymnasium-robotics Humanoid 的 head geom 初始 z ≈ 1.59
+    stand_height: float = 1.59
+    # 头部高度因子（× stand_height 为奖励下界）
     head_factor: float = 0.95
     # 头部高度奖励 margin（米）
     head_margin: float = 0.5
@@ -38,10 +40,16 @@ class PostureConfig:
     # 盆骨高度因子（× stand_height 为下界）
     pelvis_factor: float = 0.6
     # 摔倒判定: torso 高度下界（米），低于则终止
+    # 与 Gymnasium 默认 healthy_z_range 下界一致
     fall_height: float = 1.0
     # 摔倒判定: 躯干直立下界（up.z），低于则终止
     # 0.7 ≈ arccos(0.7) ≈ 45.6°，倾斜超过约 46° 终止
     fall_upright: float = 0.7
+    # 摔倒判定: 头部高度因子（× stand_height 为终止下界）
+    # 头部低于 stand_height * 0.5 ≈ 0.80m 时终止
+    head_fall_factor: float = 0.5
+    # 摔倒判定: 关节速度异常阈值（rad/s 或 m/s）
+    max_qvel: float = 200.0
 
 
 @dataclass(frozen=True)
@@ -431,11 +439,27 @@ class HumanoidMultiTask(MultiAgentMujocoEnv):
         """
         获取当前执行器控制量。
 
+        gymnasium-robotics Humanoid 有 17 个执行器
+        （无 ankle 关节，dm_control 版本为 21 个）。
+
         返回:
             17 维控制量数组。
         """
         return (
             self.single_agent_env.unwrapped.data.ctrl
+            .copy()
+        )
+
+    def _get_qvel(self) -> NDArray:
+        """
+        获取所有关节速度。
+
+        返回:
+            23 维关节速度数组（含 root 的 6 自由度
+            + 17 个铰链关节）。
+        """
+        return (
+            self.single_agent_env.unwrapped.data.qvel
             .copy()
         )
 
@@ -445,21 +469,47 @@ class HumanoidMultiTask(MultiAgentMujocoEnv):
 
     def _has_fallen(self) -> bool:
         """
-        判断是否摔倒。
+        判断是否应提前终止 episode。
 
-        满足以下任一条件视为摔倒，提前终止 episode:
-            - torso 高度低于 fall_height
-            - 躯干倾斜度低于 fall_upright（约 46°）
+        满足以下任一条件时终止:
+            - 状态包含 NaN 或 Inf
+            - 头部高度 < stand_height × head_fall_factor
+            - 躯干倾斜度 < fall_upright
+            - 任意关节速度绝对值 > max_qvel
+
+        注: torso 高度 < fall_height 由 Gymnasium 底层
+        healthy_z_range=(1.0, 2.0) 处理，此处不重复检查。
 
         返回:
             True 表示应提前终止。
         """
-        return (
-            self._get_body_z("torso")
-            < _POSTURE.fall_height
-            or self._get_body_up_z("torso")
-            < _POSTURE.fall_upright
+        # NaN / Inf 检测
+        qpos = self.single_agent_env.unwrapped.data.qpos
+        qvel = self._get_qvel()
+        if (
+            np.any(np.isnan(qpos))
+            or np.any(np.isinf(qpos))
+            or np.any(np.isnan(qvel))
+            or np.any(np.isinf(qvel))
+        ):
+            return True
+        # 头部高度过低
+        head_fall = (
+            _POSTURE.stand_height
+            * _POSTURE.head_fall_factor
         )
+        if self._get_geom_z("head") < head_fall:
+            return True
+        # 躯干倾斜过大
+        if (
+            self._get_body_up_z("torso")
+            < _POSTURE.fall_upright
+        ):
+            return True
+        # 关节速度异常
+        if np.any(np.abs(qvel) > _POSTURE.max_qvel):
+            return True
+        return False
 
     # ------------------------------------------------------------------
     # 子奖励：姿态
