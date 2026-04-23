@@ -2,7 +2,7 @@
 Hopper 多任务多智能体环境模块。
 
 基于 gymnasium_robotics MaMuJoCo 的 MultiAgentMujocoEnv 派生，
-提供 stand 和 hop 两种任务的自定义奖励函数，
+提供 stand、hop_fwd、hop_bwd 三种任务的自定义奖励函数，
 支持在任务间动态切换。
 """
 
@@ -32,7 +32,7 @@ class CommonConfig:
     # 站立高度上界（米）
     stand_height_upper: float = 2.0
     # 健康俯仰角下界（弧度），超出后终止 episode
-    healthy_pitch_low: float = float(np.deg2rad(-10))
+    healthy_pitch_low: float = float(np.deg2rad(-20))
     # 健康俯仰角上界（弧度），超出后终止 episode
     healthy_pitch_high: float = float(np.deg2rad(20))
 
@@ -69,12 +69,14 @@ class HopperMultiTask(MultiAgentMujocoEnv):
 
     支持的任务集:
         - stand: 站立保持平衡
-        - hop: 向前跳跃
+        - hop_fwd: 向前跳跃
+        - hop_bwd: 向后跳跃
     """
 
     TASKS: list[str] = [
         "stand",
-        "hop",
+        "hop_fwd",
+        "hop_bwd",
     ]
 
     def __init__(
@@ -311,8 +313,10 @@ class HopperMultiTask(MultiAgentMujocoEnv):
         task = self.task
         if task == "stand":
             return self._stand_reward()
-        elif task == "hop":
-            return self._hop_reward(infos)
+        elif task == "hop_fwd":
+            return self._hop_reward(infos, forward=True)
+        elif task == "hop_bwd":
+            return self._hop_reward(infos, forward=False)
         else:
             raise NotImplementedError(
                 f"任务 {task!r} 尚未实现"
@@ -358,6 +362,7 @@ class HopperMultiTask(MultiAgentMujocoEnv):
     def _hop_reward(
         self,
         infos: dict[str, dict],
+        forward: bool,
     ) -> float:
         """
         跳跃奖励。
@@ -365,11 +370,12 @@ class HopperMultiTask(MultiAgentMujocoEnv):
         综合两个子奖励:
             - standing: torso 相对 foot 高度在
                 目标范围内时满分
-            - hopping: 沿 x 正方向达到目标速度
+            - hopping: 沿指定方向达到目标速度
         姿态约束由 _fell_out_of_posture 兜底终止处理。
 
         参数:
             infos: 环境 step 返回的信息字典。
+            forward: True 表示前跳，False 表示后跳。
 
         返回:
             [0, 1] 区间内的奖励值。
@@ -383,8 +389,9 @@ class HopperMultiTask(MultiAgentMujocoEnv):
         )
 
         vx = self._get_x_velocity(infos)
+        speed = vx if forward else -vx
         hopping = tolerance(
-            vx,
+            speed,
             bounds=(_HOP.speed, float("inf")),
             margin=_HOP.speed / 2,
             value_at_margin=0.5,

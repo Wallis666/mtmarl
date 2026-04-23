@@ -5,7 +5,7 @@ scenario: Hopper
 # 智能体分割: "3x1" 即 3 个智能体各控制 1 个关节
 agent_conf: "3x1"
 # 观测深度: 0 仅局部、1 局部加一阶邻居
-agent_obsk: 0
+agent_obsk: 1
 # 初始任务: stand
 task: stand
 # 单回合最大步数
