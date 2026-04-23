@@ -314,9 +314,9 @@ class HopperMultiTask(MultiAgentMujocoEnv):
         if task == "stand":
             return self._stand_reward()
         elif task == "hop_fwd":
-            return self._hop_reward(infos, forward=True)
+            return self._hop_fwd_reward(infos)
         elif task == "hop_bwd":
-            return self._hop_reward(infos, forward=False)
+            return self._hop_bwd_reward(infos)
         else:
             raise NotImplementedError(
                 f"任务 {task!r} 尚未实现"
@@ -359,23 +359,21 @@ class HopperMultiTask(MultiAgentMujocoEnv):
 
         return standing * small_control
 
-    def _hop_reward(
+    def _hop_fwd_reward(
         self,
         infos: dict[str, dict],
-        forward: bool,
     ) -> float:
         """
-        跳跃奖励。
+        前跳奖励。
 
         综合两个子奖励:
             - standing: torso 相对 foot 高度在
                 目标范围内时满分
-            - hopping: 沿指定方向达到目标速度
+            - hopping: 沿正方向达到目标速度
         姿态约束由 _fell_out_of_posture 兜底终止处理。
 
         参数:
             infos: 环境 step 返回的信息字典。
-            forward: True 表示前跳，False 表示后跳。
 
         返回:
             [0, 1] 区间内的奖励值。
@@ -389,9 +387,46 @@ class HopperMultiTask(MultiAgentMujocoEnv):
         )
 
         vx = self._get_x_velocity(infos)
-        speed = vx if forward else -vx
         hopping = tolerance(
-            speed,
+            vx,
+            bounds=(_HOP.speed, float("inf")),
+            margin=_HOP.speed / 2,
+            value_at_margin=0.5,
+            sigmoid="linear",
+        )
+
+        return standing * hopping
+
+    def _hop_bwd_reward(
+        self,
+        infos: dict[str, dict],
+    ) -> float:
+        """
+        后跳奖励。
+
+        综合两个子奖励:
+            - standing: torso 相对 foot 高度在
+                目标范围内时满分
+            - hopping: 沿负方向达到目标速度
+        姿态约束由 _fell_out_of_posture 兜底终止处理。
+
+        参数:
+            infos: 环境 step 返回的信息字典。
+
+        返回:
+            [0, 1] 区间内的奖励值。
+        """
+        standing = tolerance(
+            self._get_height(),
+            bounds=(
+                _COMMON.stand_height,
+                _COMMON.stand_height_upper,
+            ),
+        )
+
+        vx = self._get_x_velocity(infos)
+        hopping = tolerance(
+            -vx,
             bounds=(_HOP.speed, float("inf")),
             margin=_HOP.speed / 2,
             value_at_margin=0.5,

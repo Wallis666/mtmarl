@@ -24,26 +24,26 @@ ENV_REGISTRY = {
 ARGS_REGISTRY = {
     "HalfCheetah": {
         "agent_conf": "2x3",
-        "agent_obsk": 0,
+        "agent_obsk": 1,
     },
     "Hopper": {
         "agent_conf": "3x1",
-        "agent_obsk": 0,
+        "agent_obsk": 1,
     },
     "Humanoid": {
         "agent_conf": "9|8",
-        "agent_obsk": 0,
+        "agent_obsk": 1,
     },
     "Walker2d": {
         "agent_conf": "2x3",
-        "agent_obsk": 0,
+        "agent_obsk": 1,
     },
     "Swimmer": {
         "agent_conf": "2x1",
-        "agent_obsk": 0,
+        "agent_obsk": 1,
     },
     "Reacher": {
         "agent_conf": "2x1",
-        "agent_obsk": 0,
+        "agent_obsk": 1,
     },
 }
