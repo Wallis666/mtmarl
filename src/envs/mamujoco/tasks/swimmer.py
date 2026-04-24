@@ -63,15 +63,10 @@ class SwimmerMultiTask(MultiAgentMujocoEnv):
             **kwargs: 传递给 MultiAgentMujocoEnv 的额外
                 参数。
         """
-        # 默认 local_categories 对邻居只共享 qpos，
-        # 这里覆盖为所有深度都共享 qpos+qvel，
-        # 使每个 agent 能观测到对方关节的角速度。
-        local_cat = [["qpos", "qvel"]] * (agent_obsk + 1)
         super().__init__(
             scenario="Swimmer",
             agent_conf=agent_conf,
             agent_obsk=agent_obsk,
-            local_categories=local_cat,
             render_mode=render_mode,
             **kwargs,
         )
