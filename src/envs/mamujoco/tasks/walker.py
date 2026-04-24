@@ -28,12 +28,12 @@ class StandConfig:
 
     # torso 最低站立高度（米）
     height: float = 1.2
-    # 目标速度上限（m/s），越接近 0 越好
-    max_speed: float = 0.5
+    # 速度容忍范围（m/s），在 margin 内衰减
+    speed_margin: float = 1.0
     # 两腿夹角下限（度）
     leg_angle_low: float = 30.0
     # 两腿夹角上限（度）
-    leg_angle_high: float = 60.0
+    leg_angle_high: float = 50.0
 
 
 @dataclass(frozen=True)
@@ -316,7 +316,7 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
             - upright: 躯干直立度映射到 [0, 1]
             - small_velocity: x 速度接近 0 时满分
             - leg_angle: 两腿夹角在目标区间内时满分
-        合并公式: standing × upright × (small_velocity + leg_angle) / 2
+        合并公式: standing × upright × small_velocity × leg_angle
 
         返回:
             [0, 1] 区间内的奖励值。
@@ -334,8 +334,8 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         )
         small_velocity = tolerance(
             x_vel,
-            bounds=(-_STAND.max_speed, _STAND.max_speed),
-            margin=_STAND.max_speed,
+            bounds=(0.0, 0.0),
+            margin=_STAND.speed_margin,
         )
 
         # 两腿夹角在目标区间内
@@ -352,5 +352,6 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         return (
             standing
             * upright
-            * (small_velocity + leg_angle_reward) / 2
+            * small_velocity
+            * leg_angle_reward
         )
