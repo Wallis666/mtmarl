@@ -40,20 +40,10 @@ class StandConfig:
 class WalkConfig:
     """行走任务参数。"""
 
-    # 前进目标速度（m/s）
-    fwd_speed: float = 1.0
-    # 后退目标速度（m/s）
-    bwd_speed: float = 1.0
-
 
 @dataclass(frozen=True)
 class RunConfig:
     """奔跑任务参数。"""
-
-    # 前进目标速度（m/s）
-    fwd_speed: float = 8.0
-    # 后退目标速度（m/s）
-    bwd_speed: float = 6.0
 
 
 # 全局默认配置实例
@@ -301,13 +291,13 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         if task == "stand":
             return self._stand_reward()
         elif task == "walk_fwd":
-            return self._walk_reward(infos)
+            raise NotImplementedError("walk_fwd 奖励尚未实现")
         elif task == "walk_bwd":
-            return self._walk_bwd_reward(infos)
+            raise NotImplementedError("walk_bwd 奖励尚未实现")
         elif task == "run_fwd":
-            return self._run_reward(infos)
+            raise NotImplementedError("run_fwd 奖励尚未实现")
         elif task == "run_bwd":
-            return self._run_bwd_reward(infos)
+            raise NotImplementedError("run_bwd 奖励尚未实现")
         else:
             raise NotImplementedError(
                 f"任务 {task!r} 尚未实现"
@@ -316,28 +306,6 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
     # ------------------------------------------------------------------
     # 各任务奖励函数
     # ------------------------------------------------------------------
-
-    def _stand_reward_components(
-        self,
-    ) -> float:
-        """
-        站立子奖励（各移动任务共用）。
-
-        综合两个因子:
-            - standing: torso 高度 ≥ _STAND.height 时满分
-            - upright: 躯干直立度映射到 [0, 1]
-        合并公式: (3 × standing + upright) / 4
-
-        返回:
-            [0, 1] 区间内的站立奖励值。
-        """
-        standing = tolerance(
-            self._get_torso_height(),
-            bounds=(_STAND.height, float("inf")),
-            margin=_STAND.height / 2,
-        )
-        upright = (1 + self._get_torso_upright()) / 2
-        return (3 * standing + upright) / 4
 
     def _stand_reward(self) -> float:
         """
@@ -386,95 +354,3 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
             * upright
             * (small_velocity + leg_angle_reward) / 2
         )
-
-    def _walk_reward(
-        self,
-        infos: dict[str, dict],
-    ) -> float:
-        """
-        向前行走任务奖励。
-
-        参数:
-            infos: 环境 step 返回的信息字典。
-
-        返回:
-            [0, 1] 区间内的奖励值。
-        """
-        stand_reward = self._stand_reward_components()
-        move_reward = tolerance(
-            self._get_x_velocity(infos),
-            bounds=(_WALK.fwd_speed, float("inf")),
-            margin=_WALK.fwd_speed / 2,
-            value_at_margin=0.5,
-            sigmoid="linear",
-        )
-        return stand_reward * (5 * move_reward + 1) / 6
-
-    def _walk_bwd_reward(
-        self,
-        infos: dict[str, dict],
-    ) -> float:
-        """
-        向后行走任务奖励。
-
-        参数:
-            infos: 环境 step 返回的信息字典。
-
-        返回:
-            [0, 1] 区间内的奖励值。
-        """
-        stand_reward = self._stand_reward_components()
-        move_reward = tolerance(
-            -self._get_x_velocity(infos),
-            bounds=(_WALK.bwd_speed, float("inf")),
-            margin=_WALK.bwd_speed / 2,
-            value_at_margin=0.5,
-            sigmoid="linear",
-        )
-        return stand_reward * (5 * move_reward + 1) / 6
-
-    def _run_reward(
-        self,
-        infos: dict[str, dict],
-    ) -> float:
-        """
-        向前奔跑任务奖励。
-
-        参数:
-            infos: 环境 step 返回的信息字典。
-
-        返回:
-            [0, 1] 区间内的奖励值。
-        """
-        stand_reward = self._stand_reward_components()
-        move_reward = tolerance(
-            self._get_x_velocity(infos),
-            bounds=(_RUN.fwd_speed, float("inf")),
-            margin=_RUN.fwd_speed / 2,
-            value_at_margin=0.5,
-            sigmoid="linear",
-        )
-        return stand_reward * (5 * move_reward + 1) / 6
-
-    def _run_bwd_reward(
-        self,
-        infos: dict[str, dict],
-    ) -> float:
-        """
-        向后奔跑任务奖励。
-
-        参数:
-            infos: 环境 step 返回的信息字典。
-
-        返回:
-            [0, 1] 区间内的奖励值。
-        """
-        stand_reward = self._stand_reward_components()
-        move_reward = tolerance(
-            -self._get_x_velocity(infos),
-            bounds=(_RUN.bwd_speed, float("inf")),
-            margin=_RUN.bwd_speed / 2,
-            value_at_margin=0.5,
-            sigmoid="linear",
-        )
-        return stand_reward * (5 * move_reward + 1) / 6
