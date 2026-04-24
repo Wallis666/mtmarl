@@ -34,6 +34,8 @@ class StandConfig:
     leg_angle_low: float = 30.0
     # 两腿夹角上限（度）
     leg_angle_high: float = 50.0
+    # 膝盖和脚踝伸直容忍范围（弧度），越接近 0 越直
+    straight_margin: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -191,12 +193,14 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
             height = self._get_torso_height()
             upright = self._get_torso_upright()
             leg_ang = self._get_leg_angle()
+            straight = self._get_leg_straightness()
             print(
                 f"\rtask={self.task:<10} "
                 f"v_x={vx:+6.2f}  "
                 f"height={height:.2f}  "
                 f"upright={upright:+.2f}  "
                 f"leg_ang={leg_ang:5.1f}°  "
+                f"straight={straight:.2f}  "
                 f"r={task_reward:.3f} ",
                 end="",
                 flush=True,
@@ -267,6 +271,31 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         qpos = self.single_agent_env.unwrapped.data.qpos
         return float(np.degrees(abs(qpos[3] - qpos[6])))
 
+    def _get_leg_straightness(self) -> float:
+        """
+        评估双腿伸直程度。
+
+        膝盖 (leg_joint qpos[4], leg_left_joint qpos[7])
+        越接近 0 表示大腿与小腿越在一条直线上。
+        取两个膝盖关节各自评分后取平均。
+
+        返回:
+            [0, 1] 区间内的伸直度，1 为完全伸直。
+        """
+        qpos = self.single_agent_env.unwrapped.data.qpos
+        # qpos[4]=右膝, qpos[7]=左膝
+        right_knee = tolerance(
+            qpos[4],
+            bounds=(0.0, 0.0),
+            margin=_STAND.straight_margin,
+        )
+        left_knee = tolerance(
+            qpos[7],
+            bounds=(0.0, 0.0),
+            margin=_STAND.straight_margin,
+        )
+        return float((right_knee + left_knee) / 2)
+
     # ------------------------------------------------------------------
     # 奖励分发
     # ------------------------------------------------------------------
@@ -311,12 +340,13 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         """
         站立任务奖励。
 
-        综合四个因子:
+        综合五个因子:
             - standing: torso 高度 ≥ 阈值时满分
             - upright: 躯干直立度映射到 [0, 1]
             - small_velocity: x 速度接近 0 时满分
             - leg_angle: 两腿夹角在目标区间内时满分
-        合并公式: standing × upright × small_velocity × leg_angle
+            - straightness: 膝盖和脚踝伸直时满分
+        合并公式: standing × upright × small_velocity × leg_angle × straightness
 
         返回:
             [0, 1] 区间内的奖励值。
@@ -349,9 +379,13 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
             margin=_STAND.leg_angle_low,
         )
 
+        # 膝盖伸直
+        straightness = self._get_leg_straightness()
+
         return (
             standing
             * upright
             * small_velocity
             * leg_angle_reward
+            * straightness
         )
