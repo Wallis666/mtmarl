@@ -6,7 +6,7 @@ from src.envs.mamujoco.tasks.hopper import HopperMultiTask
 from src.envs.mamujoco.tasks.humanoid_standup import HumanoidStandupMultiTask
 from src.envs.mamujoco.tasks.reacher import ReacherMultiTask
 from src.envs.mamujoco.tasks.swimmer import SwimmerMultiTask
-# from src.envs.mamujoco.tasks.walker import Walker2dMultiTask
+from src.envs.mamujoco.tasks.walker import Walker2dMultiTask
 
 
 # 以 scenario 名称为键，映射到对应的多任务环境类。
@@ -16,7 +16,7 @@ ENV_REGISTRY = {
     "Hopper": HopperMultiTask,
     # "Humanoid": HumanoidMultiTask,
     "HumanoidStandup": HumanoidStandupMultiTask,
-    # "Walker2d": Walker2dMultiTask,
+    "Walker2d": Walker2dMultiTask,
     "Swimmer": SwimmerMultiTask,
     "Reacher": ReacherMultiTask,
 }
