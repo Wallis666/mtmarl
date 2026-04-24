@@ -33,9 +33,9 @@ class StandConfig:
     # 两腿夹角下限（度）
     leg_angle_low: float = 30.0
     # 两腿夹角上限（度）
-    leg_angle_high: float = 50.0
-    # 膝盖和脚踝伸直容忍范围（弧度），越接近 0 越直
-    straight_margin: float = 0.5
+    leg_angle_high: float = 45.0
+    # 脚部离地容忍高度（米），z 超出此值奖励衰减到 0.1
+    foot_height_margin: float = 0.05
 
 
 @dataclass(frozen=True)
@@ -193,14 +193,14 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
             height = self._get_torso_height()
             upright = self._get_torso_upright()
             leg_ang = self._get_leg_angle()
-            straight = self._get_leg_straightness()
+            grounded = self._get_feet_grounded()
             print(
                 f"\rtask={self.task:<10} "
                 f"v_x={vx:+6.2f}  "
                 f"height={height:.2f}  "
                 f"upright={upright:+.2f}  "
                 f"leg_ang={leg_ang:5.1f}°  "
-                f"straight={straight:.2f}  "
+                f"grounded={grounded:.2f}  "
                 f"r={task_reward:.3f} ",
                 end="",
                 flush=True,
@@ -271,30 +271,31 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         qpos = self.single_agent_env.unwrapped.data.qpos
         return float(np.degrees(abs(qpos[3] - qpos[6])))
 
-    def _get_leg_straightness(self) -> float:
+    def _get_feet_grounded(self) -> float:
         """
-        评估双腿伸直程度。
+        评估双脚着地程度。
 
-        膝盖 (leg_joint qpos[4], leg_left_joint qpos[7])
-        越接近 0 表示大腿与小腿越在一条直线上。
-        取两个膝盖关节各自评分后取平均。
+        分别取 foot 和 foot_left 刚体的 z 坐标，
+        越接近 0（地面）得分越高。取两脚评分的较小值，
+        确保两只脚都必须着地才能拿高分。
 
         返回:
-            [0, 1] 区间内的伸直度，1 为完全伸直。
+            [0, 1] 区间内的着地度，1 为双脚完全着地。
         """
-        qpos = self.single_agent_env.unwrapped.data.qpos
-        # qpos[4]=右膝, qpos[7]=左膝
-        right_knee = tolerance(
-            qpos[4],
-            bounds=(0.0, 0.0),
-            margin=_STAND.straight_margin,
+        data = self.single_agent_env.unwrapped.data
+        right_foot_z = data.body("foot").xpos[2]
+        left_foot_z = data.body("foot_left").xpos[2]
+        right_grounded = tolerance(
+            right_foot_z,
+            bounds=(-float("inf"), 0.0),
+            margin=_STAND.foot_height_margin,
         )
-        left_knee = tolerance(
-            qpos[7],
-            bounds=(0.0, 0.0),
-            margin=_STAND.straight_margin,
+        left_grounded = tolerance(
+            left_foot_z,
+            bounds=(-float("inf"), 0.0),
+            margin=_STAND.foot_height_margin,
         )
-        return float((right_knee + left_knee) / 2)
+        return float(min(right_grounded, left_grounded))
 
     # ------------------------------------------------------------------
     # 奖励分发
@@ -345,8 +346,8 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
             - upright: 躯干直立度映射到 [0, 1]
             - small_velocity: x 速度接近 0 时满分
             - leg_angle: 两腿夹角在目标区间内时满分
-            - straightness: 膝盖和脚踝伸直时满分
-        合并公式: standing × upright × small_velocity × leg_angle × straightness
+            - feet_grounded: 双脚着地时满分
+        合并公式: standing × upright × small_velocity × leg_angle × feet_grounded
 
         返回:
             [0, 1] 区间内的奖励值。
@@ -379,13 +380,13 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
             margin=_STAND.leg_angle_low,
         )
 
-        # 膝盖伸直
-        straightness = self._get_leg_straightness()
+        # 双脚着地
+        feet_grounded = self._get_feet_grounded()
 
         return (
             standing
             * upright
             * small_velocity
             * leg_angle_reward
-            * straightness
+            * feet_grounded
         )
