@@ -40,6 +40,23 @@ class StandConfig:
 class WalkConfig:
     """行走任务参数。"""
 
+    # torso 高度合理区间下限（米）
+    height_low: float = 1.0
+    # torso 高度合理区间上限（米）
+    height_high: float = 1.4
+    # 高度 tolerance 的 margin
+    height_margin: float = 0.3
+    # 目标前进速度（m/s），正值向前，负值向后
+    target_speed: float = 1.0
+    # 前进速度 tolerance 的 margin
+    speed_margin: float = 1.0
+    # z 方向速度 tolerance 的 margin（防跳）
+    z_velocity_margin: float = 1.0
+    # 脚部着地判定高度上限（米）
+    foot_ground_height: float = 0.05
+    # 脚部着地 tolerance 的 margin
+    foot_ground_margin: float = 0.05
+
 
 @dataclass(frozen=True)
 class RunConfig:
@@ -190,6 +207,8 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
             vx = self._get_x_velocity(infos)
             height = self._get_torso_height()
             upright = self._get_torso_upright()
+            vz = self._get_z_velocity()
+            right_z, left_z = self._get_foot_heights()
             data = self.single_agent_env.unwrapped.data
             foot_dist = abs(
                 data.body("foot").xpos[0]
@@ -198,9 +217,11 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
             print(
                 f"\rtask={self.task:<10} "
                 f"v_x={vx:+6.2f}  "
+                f"v_z={vz:+5.2f}  "
                 f"height={height:.2f}  "
                 f"upright={upright:+.2f}  "
                 f"foot_dist={foot_dist:.2f}m  "
+                f"foot_z=({right_z:.3f},{left_z:.3f})  "
                 f"r={task_reward:.3f} ",
                 end="",
                 flush=True,
@@ -258,6 +279,30 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         )
         return float(xmat[8])
 
+    def _get_z_velocity(self) -> float:
+        """
+        获取 torso 的 z 方向速度。
+
+        返回:
+            rootz 关节的广义速度（m/s）。
+        """
+        return float(
+            self.single_agent_env.unwrapped.data.qvel[1]
+        )
+
+    def _get_foot_heights(self) -> tuple[float, float]:
+        """
+        获取左右脚刚体的 z 坐标。
+
+        返回:
+            (右脚 z, 左脚 z) 元组。
+        """
+        data = self.single_agent_env.unwrapped.data
+        return (
+            float(data.body("foot").xpos[2]),
+            float(data.body("foot_left").xpos[2]),
+        )
+
     def _get_feet_spread(self) -> float:
         """
         评估两脚的水平间距。
@@ -308,9 +353,9 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         if task == "stand":
             return self._stand_reward(infos)
         elif task == "walk_fwd":
-            raise NotImplementedError("walk_fwd 奖励尚未实现")
+            return self._walk_fwd_reward(infos)
         elif task == "walk_bwd":
-            raise NotImplementedError("walk_bwd 奖励尚未实现")
+            return self._walk_bwd_reward(infos)
         elif task == "run_fwd":
             raise NotImplementedError("run_fwd 奖励尚未实现")
         elif task == "run_bwd":
@@ -364,4 +409,142 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
             * upright
             * small_velocity
             * feet_spread
+        )
+
+    def _walk_fwd_reward(
+        self,
+        infos: dict[str, dict],
+    ) -> float:
+        """
+        向前行走任务奖励。
+
+        综合五个因子:
+            - standing: torso 高度在合理区间内时满分
+            - upright: 躯干直立度映射到 [0, 1]
+            - move: 水平速度达到目标速度时满分
+            - smooth_z: z 方向速度接近 0 时满分（防跳）
+            - grounded: 至少一只脚着地时满分（防飞行）
+        合并公式: standing × upright × move × smooth_z × grounded
+
+        返回:
+            [0, 1] 区间内的奖励值。
+        """
+        # 高度在合理区间
+        standing = tolerance(
+            self._get_torso_height(),
+            bounds=(
+                _WALK.height_low,
+                _WALK.height_high,
+            ),
+            margin=_WALK.height_margin,
+        )
+
+        # 躯干直立
+        upright = (1 + self._get_torso_upright()) / 2
+
+        # 水平速度达到目标（正方向）
+        vx = self._get_x_velocity(infos)
+        move = tolerance(
+            vx,
+            bounds=(_WALK.target_speed, float("inf")),
+            margin=_WALK.speed_margin,
+        )
+
+        # z 方向速度接近 0（防跳）
+        vz = self._get_z_velocity()
+        smooth_z = tolerance(
+            vz,
+            bounds=(0.0, 0.0),
+            margin=_WALK.z_velocity_margin,
+        )
+
+        # 至少一只脚着地（防飞行相）
+        right_z, left_z = self._get_foot_heights()
+        right_ground = tolerance(
+            right_z,
+            bounds=(0.0, _WALK.foot_ground_height),
+            margin=_WALK.foot_ground_margin,
+        )
+        left_ground = tolerance(
+            left_z,
+            bounds=(0.0, _WALK.foot_ground_height),
+            margin=_WALK.foot_ground_margin,
+        )
+        grounded = max(right_ground, left_ground)
+
+        return (
+            standing
+            * upright
+            * move
+            * smooth_z
+            * grounded
+        )
+
+    def _walk_bwd_reward(
+        self,
+        infos: dict[str, dict],
+    ) -> float:
+        """
+        向后行走任务奖励。
+
+        综合五个因子:
+            - standing: torso 高度在合理区间内时满分
+            - upright: 躯干直立度映射到 [0, 1]
+            - move: 水平速度达到目标负速度时满分
+            - smooth_z: z 方向速度接近 0 时满分（防跳）
+            - grounded: 至少一只脚着地时满分（防飞行）
+        合并公式: standing × upright × move × smooth_z × grounded
+
+        返回:
+            [0, 1] 区间内的奖励值。
+        """
+        # 高度在合理区间
+        standing = tolerance(
+            self._get_torso_height(),
+            bounds=(
+                _WALK.height_low,
+                _WALK.height_high,
+            ),
+            margin=_WALK.height_margin,
+        )
+
+        # 躯干直立
+        upright = (1 + self._get_torso_upright()) / 2
+
+        # 水平速度达到目标（负方向）
+        vx = self._get_x_velocity(infos)
+        move = tolerance(
+            vx,
+            bounds=(float("-inf"), -_WALK.target_speed),
+            margin=_WALK.speed_margin,
+        )
+
+        # z 方向速度接近 0（防跳）
+        vz = self._get_z_velocity()
+        smooth_z = tolerance(
+            vz,
+            bounds=(0.0, 0.0),
+            margin=_WALK.z_velocity_margin,
+        )
+
+        # 至少一只脚着地（防飞行相）
+        right_z, left_z = self._get_foot_heights()
+        right_ground = tolerance(
+            right_z,
+            bounds=(0.0, _WALK.foot_ground_height),
+            margin=_WALK.foot_ground_margin,
+        )
+        left_ground = tolerance(
+            left_z,
+            bounds=(0.0, _WALK.foot_ground_height),
+            margin=_WALK.foot_ground_margin,
+        )
+        grounded = max(right_ground, left_ground)
+
+        return (
+            standing
+            * upright
+            * move
+            * smooth_z
+            * grounded
         )
