@@ -41,7 +41,7 @@ class WalkConfig:
     """行走任务参数。"""
 
     # torso 高度合理区间下限（米）
-    height_low: float = 0.8
+    height_low: float = 1.0
     # torso 高度合理区间上限（米）
     height_high: float = 1.4
     # 高度 tolerance 的 margin
@@ -221,7 +221,7 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
                 f"height={height:.2f}  "
                 f"upright={upright:+.2f}  "
                 f"foot_dist={foot_dist:.2f}m  "
-                f"foot_z=({right_z:.3f},{left_z:.3f})  "
+                f"foot_z=({right_z:.3f}, {left_z:.3f})  "
                 f"r={task_reward:.3f} ",
                 end="",
                 flush=True,
