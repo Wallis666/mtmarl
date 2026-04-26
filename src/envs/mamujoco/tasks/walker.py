@@ -30,10 +30,6 @@ class StandConfig:
     height: float = 1.2
     # 速度容忍范围（m/s），在 margin 内衰减
     speed_margin: float = 1.0
-    # 两脚水平间距目标下限（米）
-    foot_spread_low: float = 0.25
-    # 两脚水平间距目标上限（米）
-    foot_spread_high: float = 0.4
 
 
 @dataclass(frozen=True)
@@ -230,18 +226,12 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
             upright = self._get_torso_upright()
             vz = self._get_z_velocity()
             right_z, left_z = self._get_foot_heights()
-            data = self.single_agent_env.unwrapped.data
-            foot_dist = abs(
-                data.body("foot").xpos[0]
-                - data.body("foot_left").xpos[0]
-            )
             print(
                 f"\rtask={self.task:<10} "
                 f"v_x={vx:+6.2f}  "
                 f"v_z={vz:+5.2f}  "
                 f"height={height:.2f}  "
                 f"upright={upright:+.2f}  "
-                f"foot_dist={foot_dist:.2f}m  "
                 f"foot_z=({right_z:.3f}, {left_z:.3f})  "
                 f"r={task_reward:.3f} ",
                 end="",
@@ -332,32 +322,6 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
             float(data.body("foot_left").xpos[2]),
         )
 
-    def _get_feet_spread(self) -> float:
-        """
-        评估两脚的水平间距。
-
-        取 foot 和 foot_left 刚体 x 坐标的绝对差值，
-        落在 [foot_spread_low, foot_spread_high] 区间内
-        时满分。这直接约束了腿要真正张开到脚的位置，
-        防止大腿张开但膝盖弯回来的 |> 姿态。
-
-        返回:
-            [0, 1] 区间内的评分。
-        """
-        data = self.single_agent_env.unwrapped.data
-        foot_dist = abs(
-            data.body("foot").xpos[0]
-            - data.body("foot_left").xpos[0]
-        )
-        return float(tolerance(
-            foot_dist,
-            bounds=(
-                _STAND.foot_spread_low,
-                _STAND.foot_spread_high,
-            ),
-            margin=_STAND.foot_spread_low,
-        ))
-
     # ------------------------------------------------------------------
     # 奖励分发
     # ------------------------------------------------------------------
@@ -405,12 +369,11 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
         """
         站立任务奖励。
 
-        综合四个因子:
+        综合三个因子:
             - standing: torso 高度 ≥ 阈值时满分
             - upright: 躯干直立度映射到 [0, 1]
             - small_velocity: x 速度接近 0 时满分
-            - feet_spread: 两脚水平间距在目标区间内时满分
-        合并公式: standing × upright × small_velocity × feet_spread
+        合并公式: standing × upright × small_velocity
 
         返回:
             [0, 1] 区间内的奖励值。
@@ -430,14 +393,10 @@ class Walker2dMultiTask(MultiAgentMujocoEnv):
             margin=_STAND.speed_margin,
         )
 
-        # 两脚水平间距
-        feet_spread = self._get_feet_spread()
-
         return (
             standing
             * upright
             * small_velocity
-            * feet_spread
         )
 
     def _walk_fwd_reward(
