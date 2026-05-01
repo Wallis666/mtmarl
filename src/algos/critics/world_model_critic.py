@@ -15,7 +15,7 @@ import numpy as np
 import torch
 from gymnasium import spaces
 
-from src.models.value.world_model_value import (
+from src.models.value.continuous_q_net import (
     ContinuousQNet,
 )
 from src.utils.env import check
