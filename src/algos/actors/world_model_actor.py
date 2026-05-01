@@ -11,8 +11,8 @@ import numpy as np
 import torch
 from gymnasium import spaces
 
-from src.models.policy.squashed_gaussian_policy import (
-    SquashedGaussianPolicy,
+from src.models.policy.world_model_policy import (
+    WorldModelPolicy,
 )
 from src.utils.env import check
 from src.utils.model import update_linear_schedule
@@ -58,7 +58,7 @@ class WorldModelActor:
         self.lr = args["lr"]
         self.device = device
 
-        self.actor = SquashedGaussianPolicy(
+        self.actor = WorldModelPolicy(
             args, obs_space, act_space, device,
         )
         self.actor_optimizer = torch.optim.Adam(

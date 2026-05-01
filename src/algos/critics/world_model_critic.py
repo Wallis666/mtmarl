@@ -15,8 +15,8 @@ import numpy as np
 import torch
 from gymnasium import spaces
 
-from src.models.value.continuous_q_net import (
-    ContinuousQNet,
+from src.models.value.world_model_value import (
+    WorldModelValue,
 )
 from src.utils.env import check
 from src.utils.math import TwoHotProcessor
@@ -75,10 +75,10 @@ class WorldModelCritic:
         )
 
         # Twin Q 网络
-        self.critic = ContinuousQNet(
+        self.critic = WorldModelValue(
             args, share_obs_space, act_space, device,
         )
-        self.critic2 = ContinuousQNet(
+        self.critic2 = WorldModelValue(
             args, share_obs_space, act_space, device,
         )
 

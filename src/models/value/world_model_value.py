@@ -34,7 +34,7 @@ def get_combined_dim(
     return combined_dim
 
 
-class ContinuousQNet(nn.Module):
+class WorldModelValue(nn.Module):
     """Q 网络，适用于连续和离散动作空间。"""
 
     def __init__(
