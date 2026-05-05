@@ -35,9 +35,9 @@ world_model:
   num_enc_layers: 2
   enc_lr_scale: 0.3
   # dynamics: 2 experts → ~700k params
-  num_dynamics_experts: 16
-  dynamics_mlp_dims: [512, 512]
-  num_reward_experts: 16
+  num_dynamics_experts: 8
+  dynamics_mlp_dims: [256, 256]
+  num_reward_experts: 8
   top_k: 2
   num_heads: 1
   ffn_hidden: 128
