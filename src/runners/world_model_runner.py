@@ -128,6 +128,7 @@ class WorldModelRunner:
             self.log_file,
             self.task_name,
             self.expt_name,
+            self.writter,
         ) = self._init_config()
 
         # 创建环境
@@ -398,13 +399,18 @@ class WorldModelRunner:
         if self.algo_args["logger"].get("save_model"):
             os.makedirs(save_dir, exist_ok=True)
 
+        log_dir = os.path.join(run_dir, "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        from tensorboardX import SummaryWriter
+        writter = SummaryWriter(log_dir)
+
         log_file = open(
             os.path.join(run_dir, "progress.txt"),
             "w", encoding="utf-8",
         )
         return (
             run_dir, save_dir, log_file,
-            task_name, expt_name,
+            task_name, expt_name, writter,
         )
 
     # ===========================================================
@@ -1717,11 +1723,12 @@ class WorldModelRunner:
         )
 
     def close(self) -> None:
-        """关闭环境和日志文件。"""
+        """关闭环境、日志文件和 TensorBoard。"""
         self.envs.close()
         if (self.eval_envs is not None
                 and self.eval_envs is not self.envs):
             self.eval_envs.close()
+        self.writter.close()
         self.log_file.close()
 
     # ===========================================================
@@ -1777,3 +1784,13 @@ class WorldModelRunner:
             print(line)
             self.log_file.write(line + "\n")
         self.log_file.flush()
+
+        # 写入 TensorBoard
+        global_step = step * self.algo_args["train"][
+            "n_rollout_threads"
+        ]
+        for key, value in kwargs.items():
+            for k, v in value.items():
+                self.writter.add_scalar(
+                    f"{key}/{k}", v, global_step,
+                )
