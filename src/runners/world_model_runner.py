@@ -16,6 +16,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from gymnasium.spaces import Box
+from tqdm import tqdm
 
 from src.algos.actors.world_model_actor import (
     WorldModelActor,
@@ -444,7 +445,12 @@ class WorldModelRunner:
 
         train_info: dict = {}
 
-        for step in range(1, steps + 1):
+        pbar = tqdm(
+            range(1, steps + 1),
+            desc="训练中",
+            unit="step",
+        )
+        for step in pbar:
             # 环境交互
             actions = self.plan(
                 obs, t0=t0, add_random=True,
@@ -512,6 +518,16 @@ class WorldModelRunner:
                         )
                         done_rewards[tid] = []
 
+                # 更新进度条
+                pbar.set_postfix({
+                    "loss": avg_info.get(
+                        "total_loss", 0,
+                    ),
+                    "rew": rollout_info.get(
+                        "rew_buffer", 0,
+                    ),
+                })
+
                 self._log(
                     step, start_time, check_time,
                     train_info=avg_info,
@@ -552,7 +568,11 @@ class WorldModelRunner:
         )
         obs, share_obs, _ = self.envs.reset()
 
-        for _ in range(warmup_steps):
+        for _ in tqdm(
+            range(warmup_steps),
+            desc="预热(交互)",
+            unit="step",
+        ):
             actions = self._sample_random_actions()
             (
                 new_obs, new_share_obs, rewards,
@@ -568,9 +588,12 @@ class WorldModelRunner:
         # 可选：预热阶段训练 world model
         wm_cfg = self.algo_args["world_model"]
         if wm_cfg.get("warmup_train"):
-            for _ in range(wm_cfg.get(
-                "wt_steps", 10000,
-            )):
+            wt_steps = wm_cfg.get("wt_steps", 10000)
+            for _ in tqdm(
+                range(wt_steps),
+                desc="预热(训练)",
+                unit="step",
+            ):
                 self.train(train_actor=True)
 
         return obs, share_obs, None
@@ -1428,11 +1451,11 @@ class WorldModelRunner:
         self._model_turn_off_grad()
 
         train_info.update({
-            "dynamics_loss": float(dyn_loss),
-            "reward_loss": float(rew_loss),
-            "q_loss": float(q_loss),
-            "balance_loss": float(bal_loss),
-            "total_loss": float(total_loss),
+            "dynamics_loss": float(dyn_loss.detach()),
+            "reward_loss": float(rew_loss.detach()),
+            "q_loss": float(q_loss.detach()),
+            "balance_loss": float(bal_loss.detach()),
+            "total_loss": float(total_loss.detach()),
         })
         return train_info, zs.detach()
 
