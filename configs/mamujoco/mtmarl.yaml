@@ -66,12 +66,12 @@ plan:
 
 train:
   num_env_steps: 2000000
-  n_rollout_threads: 11
+  n_rollout_threads: 22
   warmup_steps: 10000
   train_interval: 1
   update_per_train: 1
   buffer_size: 1000000
-  batch_size: 1000
+  batch_size: 5000
   n_step: 20
   use_linear_lr_decay: False
   log_interval: 1000

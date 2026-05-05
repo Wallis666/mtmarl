@@ -456,15 +456,26 @@ class WorldModelRunner:
             desc="训练中",
             unit="step",
         )
+        # 计时累加器
+        _t_plan = 0.0
+        _t_env = 0.0
+        _t_train = 0.0
+        _t_count = 0
+
         for step in pbar:
             # 环境交互
+            _t0 = time.time()
             actions = self.plan(
                 obs, t0=t0, add_random=True,
             )
+            _t_plan += time.time() - _t0
+
+            _t0 = time.time()
             (
                 new_obs, new_share_obs, rewards,
                 dones, infos, _,
             ) = self.envs.step(actions)
+            _t_env += time.time() - _t0
 
             # 记录回合奖励
             dones_env = np.all(dones, axis=1)
@@ -491,6 +502,7 @@ class WorldModelRunner:
             share_obs = new_share_obs
 
             # 训练
+            _t0 = time.time()
             if step % train_cfg["train_interval"] == 0:
                 if train_cfg.get("use_linear_lr_decay"):
                     for i in range(self.num_agents):
@@ -505,6 +517,8 @@ class WorldModelRunner:
                         train_info.setdefault(
                             k, [],
                         ).append(v)
+            _t_train += time.time() - _t0
+            _t_count += 1
 
             # 日志
             if step % train_cfg["log_interval"] == 0:
@@ -523,6 +537,26 @@ class WorldModelRunner:
                             np.mean(done_rewards[tid])
                         )
                         done_rewards[tid] = []
+
+                # 打印耗时分布
+                if _t_count > 0:
+                    total_t = (
+                        _t_plan + _t_env + _t_train
+                    )
+                    if total_t > 0:
+                        print(
+                            f"  耗时分布: "
+                            f"plan={_t_plan/total_t*100:.0f}%"
+                            f"({_t_plan/_t_count*1000:.0f}ms) "
+                            f"env={_t_env/total_t*100:.0f}%"
+                            f"({_t_env/_t_count*1000:.0f}ms) "
+                            f"train={_t_train/total_t*100:.0f}%"
+                            f"({_t_train/_t_count*1000:.0f}ms)"
+                        )
+                    _t_plan = 0.0
+                    _t_env = 0.0
+                    _t_train = 0.0
+                    _t_count = 0
 
                 # 更新进度条
                 pbar.set_postfix({
