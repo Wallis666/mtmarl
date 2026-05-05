@@ -432,57 +432,73 @@ class MultiTaskMaMuJoCo:
     def reset(
         self,
         seed: int | None = None,
-    ) -> tuple[dict[str, NDArray], dict[str, dict]]:
+    ) -> tuple[list[NDArray], list[NDArray], list]:
         """
         重置当前任务的底层环境并返回统一维度的观测。
+
+        返回格式与 VecEnv wrapper 对齐:
+        (obs_n, share_obs_n, available_actions)
 
         参数:
             seed: 随机种子，透传给底层环境。若为 None
                 则使用 seed() 方法暂存的种子。
 
         返回:
-            (观测, 信息) 二元组，观测已对齐为统一维度。
+            (obs_n, share_obs_n, available_actions)
+            三元组，其中:
+            - obs_n: 各智能体观测列表。
+            - share_obs_n: 各智能体共享观测列表。
+            - available_actions: 可用动作列表（连续
+              空间下为 [None, ...]）。
         """
         if seed is None:
             seed = getattr(self, "_seed", None)
             self._seed = None
-        raw_obs, raw_infos = self.env.reset(seed=seed)
+        raw_obs, _ = self.env.reset(seed=seed)
         obs = self._pad_obs(raw_obs)
 
-        # 映射真实智能体 + 补充虚拟智能体
-        real_agents = self._domain_agents[self.domain_idx]
-        infos: dict[str, dict] = {}
-        for i, agent_key in enumerate(real_agents):
-            infos[self._agents[i]] = raw_infos[agent_key]
-        for i in range(len(real_agents), self._n_agents):
-            infos[self._agents[i]] = {}
-
-        return obs, infos
+        # 转为列表形式
+        obs_n = [
+            obs[agent] for agent in self._agents
+        ]
+        share_obs_n = [
+            np.zeros(1, dtype=np.float32)
+            for _ in range(self._n_agents)
+        ]
+        available_actions = [
+            None for _ in range(self._n_agents)
+        ]
+        return obs_n, share_obs_n, available_actions
 
     def step(
         self,
-        actions: dict[str, NDArray],
+        actions: list[NDArray],
     ) -> tuple[
-        dict[str, NDArray],
-        dict[str, float],
-        dict[str, bool],
-        dict[str, bool],
-        dict[str, dict],
+        list[NDArray], list[NDArray],
+        list[NDArray], list[bool],
+        list[dict], list,
     ]:
         """
         执行一步交互并返回统一维度的结果。
 
+        返回格式与 VecEnv wrapper 对齐:
+        (obs_n, share_obs_n, reward_n, done_n,
+         info_n, available_actions)
+
         参数:
-            actions: 统一维度的动作字典，键为
-                self.agents 中的名称。
+            actions: 各智能体动作列表，每个元素为
+                统一维度的动作向量。
 
         返回:
-            (观测, 奖励, 终止, 截断, 信息) 五元组，
-            所有字典的键均为统一的智能体名称，
-            虚拟智能体补默认值。
+            (obs_n, share_obs_n, reward_n, done_n,
+             info_n, available_actions) 六元组。
         """
-        # 裁剪动作并执行
-        cropped = self._crop_actions(actions)
+        # 将列表转为字典并裁剪
+        actions_dict: dict[str, NDArray] = {}
+        for i, agent in enumerate(self._agents):
+            actions_dict[agent] = actions[i]
+        cropped = self._crop_actions(actions_dict)
+
         raw_obs, raw_rew, raw_term, raw_trunc, raw_info = (
             self.env.step(cropped)
         )
@@ -491,27 +507,54 @@ class MultiTaskMaMuJoCo:
         obs = self._pad_obs(raw_obs)
 
         # 映射真实智能体 + 补充虚拟智能体
-        real_agents = self._domain_agents[self.domain_idx]
-        rewards: dict[str, float] = {}
-        terms: dict[str, bool] = {}
-        truncs: dict[str, bool] = {}
-        infos: dict[str, dict] = {}
+        real_agents = (
+            self._domain_agents[self.domain_idx]
+        )
 
-        for i, agent_key in enumerate(real_agents):
-            unified = self._agents[i]
-            rewards[unified] = raw_rew[agent_key]
-            terms[unified] = raw_term[agent_key]
-            truncs[unified] = raw_trunc[agent_key]
-            infos[unified] = raw_info[agent_key]
+        obs_n: list[NDArray] = []
+        reward_n: list[NDArray] = []
+        done_n: list[bool] = []
+        info_n: list[dict] = []
 
-        for i in range(len(real_agents), self._n_agents):
-            unified = self._agents[i]
-            rewards[unified] = 0.0
-            terms[unified] = False
-            truncs[unified] = False
-            infos[unified] = {}
+        for i, agent in enumerate(self._agents):
+            obs_n.append(obs[agent])
+            if i < len(real_agents):
+                agent_key = real_agents[i]
+                reward_n.append(
+                    np.array([raw_rew[agent_key]]),
+                )
+                done = (
+                    raw_term[agent_key]
+                    or raw_trunc[agent_key]
+                )
+                done_n.append(done)
+                info_i = dict(raw_info[agent_key])
+                info_i["bad_transition"] = (
+                    raw_trunc[agent_key]
+                    and not raw_term[agent_key]
+                )
+                info_n.append(info_i)
+            else:
+                reward_n.append(
+                    np.array([0.0]),
+                )
+                done_n.append(False)
+                info_n.append(
+                    {"bad_transition": False},
+                )
 
-        return obs, rewards, terms, truncs, infos
+        share_obs_n = [
+            np.zeros(1, dtype=np.float32)
+            for _ in range(self._n_agents)
+        ]
+        available_actions = [
+            None for _ in range(self._n_agents)
+        ]
+
+        return (
+            obs_n, share_obs_n, reward_n,
+            done_n, info_n, available_actions,
+        )
 
     # ----------------------------------------------------------------
     # 动作掩码
