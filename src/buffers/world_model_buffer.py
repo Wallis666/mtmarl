@@ -423,16 +423,17 @@ class WorldModelBuffer:
             sp_next_available_actions = None
 
         # n-step 累积奖励
+        actual_batch = len(indices)
         gamma_buffer = np.ones(self.n_step + 1)
         for i in range(1, self.n_step + 1):
             gamma_buffer[i] = (
                 gamma_buffer[i - 1] * self.gamma
             )
         sp_reward = np.zeros(
-            (self.batch_size, 1),
+            (actual_batch, 1),
         )
         gammas = np.full(
-            self.batch_size, self.n_step,
+            actual_batch, self.n_step,
         )
         for n in range(self.n_step - 1, -1, -1):
             now = idx_chain[n]
@@ -444,7 +445,7 @@ class WorldModelBuffer:
                 + self.gamma * sp_reward
             )
         sp_gamma = gamma_buffer[gammas].reshape(
-            self.batch_size, 1,
+            actual_batch, 1,
         )
 
         # 1-step 数据（用于 world model 训练）
@@ -566,7 +567,7 @@ class WorldModelBuffer:
             for i in range(self.num_agents)
         ])
         sp_gamma = np.full(
-            (horizon, self.batch_size, 1),
+            (horizon, len(t0), 1),
             self.gamma,
         )
 
@@ -593,6 +594,124 @@ class WorldModelBuffer:
         """返回缓冲区中已有数据的平均奖励。"""
         return float(
             np.mean(self.rewards[:self.cur_size]),
+        )
+
+    def load_demo_data(
+        self,
+        path: str,
+    ) -> None:
+        """
+        从 npz 文件加载演示数据到独立的 demo buffer。
+
+        demo buffer 与在线 buffer 分离，在线数据不会
+        覆盖演示数据。采样时通过 sample() 的 demo_ratio
+        参数控制混合比例。
+
+        参数:
+            path: npz 文件路径。
+        """
+        data = np.load(path)
+        total_steps = int(data["total_steps"])
+        n_agents = int(data["n_agents"])
+
+        self._demo_size = total_steps
+        self._demo_share_obs = data["share_obs"]
+        self._demo_next_share_obs = (
+            data["next_share_obs"]
+        )
+        self._demo_rewards = data["rewards"]
+        self._demo_dones = data["dones"]
+        self._demo_terms = data["terms"]
+        self._demo_obs = [
+            data[f"obs_{i}"] for i in range(n_agents)
+        ]
+        self._demo_actions = [
+            data[f"actions_{i}"]
+            for i in range(n_agents)
+        ]
+        self._demo_valid_transitions = [
+            data[f"valid_transitions_{i}"]
+            for i in range(n_agents)
+        ]
+        self._demo_next_obs = [
+            data[f"next_obs_{i}"]
+            for i in range(n_agents)
+        ]
+
+        print(
+            f"  已加载演示数据: {total_steps} 步 "
+            f"(来自 {path})"
+        )
+
+    @property
+    def has_demo(self) -> bool:
+        """是否已加载演示数据。"""
+        return hasattr(self, "_demo_size")
+
+    def sample_demo(
+        self,
+        batch_size: int | None = None,
+    ) -> tuple:
+        """
+        从演示 buffer 中随机采样。
+
+        返回格式与 sample_horizon 一致，horizon=1。
+
+        参数:
+            batch_size: 采样数量，默认使用
+                self.batch_size。
+
+        返回:
+            与 sample() 相同格式的元组。
+        """
+        if batch_size is None:
+            batch_size = self.batch_size
+        indices = torch.randperm(
+            self._demo_size,
+        ).numpy()[:batch_size]
+
+        sp_share_obs = self._demo_share_obs[indices]
+        sp_obs = np.array([
+            self._demo_obs[i][indices]
+            for i in range(self.num_agents)
+        ])
+        sp_actions = np.array([
+            self._demo_actions[i][indices]
+            for i in range(self.num_agents)
+        ])
+        sp_valid_transitions = np.array([
+            self._demo_valid_transitions[i][indices]
+            for i in range(self.num_agents)
+        ])
+        sp_reward = self._demo_rewards[indices]
+        sp_done = self._demo_dones[indices]
+        sp_term = self._demo_terms[indices]
+        sp_next_share_obs = (
+            self._demo_next_share_obs[indices]
+        )
+        sp_next_obs = np.array([
+            self._demo_next_obs[i][indices]
+            for i in range(self.num_agents)
+        ])
+        sp_gamma = np.full(
+            (batch_size, 1), self.gamma,
+        )
+
+        return (
+            sp_share_obs,
+            sp_obs,
+            sp_actions,
+            None,
+            sp_reward,
+            sp_done,
+            sp_valid_transitions,
+            sp_term,
+            sp_next_share_obs,
+            sp_next_obs,
+            None,
+            sp_gamma,
+            sp_next_obs,
+            sp_reward,
         )
 
     # -------------------------------------------------------

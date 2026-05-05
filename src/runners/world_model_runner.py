@@ -311,6 +311,13 @@ class WorldModelRunner:
             self.action_spaces,
         )
 
+        # 加载演示数据
+        demo_path = self.algo_args["train"].get(
+            "demo_data",
+        )
+        if demo_path:
+            self.buffer.load_demo_data(demo_path)
+
         # 加载已有模型
         if self.algo_args["train"].get("model_dir"):
             self.restore()
@@ -1058,45 +1065,156 @@ class WorldModelRunner:
             训练信息字典。
         """
         if self.buffer.cur_size < self.buffer.batch_size:
-            return {}
+            # 在线数据不够但有演示数据时，仅用演示训练
+            if not self.buffer.has_demo:
+                return {}
         self.total_it += 1
 
-        # 采样
-        t0 = torch.randperm(
-            self.buffer.cur_size,
-        ).numpy()[:self.buffer.batch_size]
-        self.buffer._update_end_flag()
-        indices = [t0]
-        for _ in range(self.horizon - 1):
-            indices.append(
-                self.buffer._next_indices(
-                    indices[-1],
-                ),
+        # 确定交互数据/演示数据的采样比例
+        demo_ratio = self.algo_args["train"].get(
+            "demo_ratio", 0.5,
+        )
+        batch_size = self.buffer.batch_size
+        if (self.buffer.has_demo
+                and self.buffer.cur_size > 0):
+            n_demo = int(batch_size * demo_ratio)
+            n_online = batch_size - n_demo
+        elif self.buffer.has_demo:
+            # 在线数据为空，全用演示
+            n_demo = batch_size
+            n_online = 0
+        else:
+            n_demo = 0
+            n_online = batch_size
+
+        # 采样在线数据
+        if n_online > 0:
+            t0 = torch.randperm(
+                self.buffer.cur_size,
+            ).numpy()[:n_online]
+            self.buffer._update_end_flag()
+            indices = [t0]
+            for _ in range(self.horizon - 1):
+                indices.append(
+                    self.buffer._next_indices(
+                        indices[-1],
+                    ),
+                )
+
+            data_h = self.buffer.sample_horizon(
+                horizon=self.horizon, t0=t0,
+            )
+            (
+                _, sp_obs, sp_actions, _, sp_reward,
+                _, _, sp_term, _, sp_next_obs, _, _,
+            ) = data_h
+
+            # 对每个时间步计算 n-step 目标
+            sp_nstep_reward = np.zeros_like(sp_reward)
+            sp_nstep_term = np.zeros_like(sp_term)
+            sp_nstep_next_obs = np.zeros_like(
+                sp_next_obs,
+            )
+            sp_nstep_gamma = np.zeros_like(sp_reward)
+            for t, idx in enumerate(indices):
+                data_n = self.buffer.sample(
+                    indices=idx,
+                )
+                (
+                    _, _, _, _, nr, _, _, nt,
+                    _, nno, _, ng, _, _,
+                ) = data_n
+                sp_nstep_reward[t] = nr
+                sp_nstep_term[t] = nt
+                sp_nstep_next_obs[:, t] = nno
+                sp_nstep_gamma[t] = ng
+
+        # 采样演示数据并混合
+        if n_demo > 0:
+            demo_data = self.buffer.sample_demo(
+                batch_size=n_demo,
+            )
+            (
+                _, d_obs, d_actions, _, d_reward,
+                _, _, d_term, _, d_next_obs,
+                _, d_gamma, _, _,
+            ) = demo_data
+
+            # 演示数据按 horizon=1 扩展
+            d_obs = d_obs[:, np.newaxis, :, :]
+            d_actions = d_actions[
+                :, np.newaxis, :, :
+            ]
+            d_reward = d_reward[np.newaxis, :, :]
+            d_term = d_term[np.newaxis, :, :]
+            d_next_obs = d_next_obs[
+                :, np.newaxis, :, :
+            ]
+            d_gamma = d_gamma[np.newaxis, :, :]
+
+            # 扩展到 horizon 步（重复）
+            d_obs = np.repeat(
+                d_obs, self.horizon, axis=1,
+            )
+            d_actions = np.repeat(
+                d_actions, self.horizon, axis=1,
+            )
+            d_reward = np.repeat(
+                d_reward, self.horizon, axis=0,
+            )
+            d_term = np.repeat(
+                d_term, self.horizon, axis=0,
+            )
+            d_next_obs = np.repeat(
+                d_next_obs, self.horizon, axis=1,
+            )
+            d_gamma = np.repeat(
+                d_gamma, self.horizon, axis=0,
             )
 
-        data_h = self.buffer.sample_horizon(
-            horizon=self.horizon, t0=t0,
-        )
-        (
-            _, sp_obs, sp_actions, _, sp_reward,
-            _, _, sp_term, _, sp_next_obs, _, _,
-        ) = data_h
-
-        # 对每个时间步计算 n-step 目标
-        sp_nstep_reward = np.zeros_like(sp_reward)
-        sp_nstep_term = np.zeros_like(sp_term)
-        sp_nstep_next_obs = np.zeros_like(sp_next_obs)
-        sp_nstep_gamma = np.zeros_like(sp_reward)
-        for t, idx in enumerate(indices):
-            data_n = self.buffer.sample(indices=idx)
-            (
-                _, _, _, _, nr, _, _, nt,
-                _, nno, _, ng, _, _,
-            ) = data_n
-            sp_nstep_reward[t] = nr
-            sp_nstep_term[t] = nt
-            sp_nstep_next_obs[:, t] = nno
-            sp_nstep_gamma[t] = ng
+            if n_online > 0:
+                # 沿 batch 维拼接
+                sp_obs = np.concatenate(
+                    [sp_obs, d_obs], axis=2,
+                )
+                sp_actions = np.concatenate(
+                    [sp_actions, d_actions], axis=2,
+                )
+                sp_reward = np.concatenate(
+                    [sp_reward, d_reward], axis=1,
+                )
+                sp_term = np.concatenate(
+                    [sp_term, d_term], axis=1,
+                )
+                sp_next_obs = np.concatenate(
+                    [sp_next_obs, d_next_obs], axis=2,
+                )
+                sp_nstep_reward = np.concatenate(
+                    [sp_nstep_reward, d_reward],
+                    axis=1,
+                )
+                sp_nstep_term = np.concatenate(
+                    [sp_nstep_term, d_term], axis=1,
+                )
+                sp_nstep_next_obs = np.concatenate(
+                    [sp_nstep_next_obs, d_next_obs],
+                    axis=2,
+                )
+                sp_nstep_gamma = np.concatenate(
+                    [sp_nstep_gamma, d_gamma],
+                    axis=1,
+                )
+            else:
+                # 全用演示
+                sp_obs = d_obs
+                sp_actions = d_actions
+                sp_reward = d_reward
+                sp_term = d_term
+                sp_next_obs = d_next_obs
+                sp_nstep_reward = d_reward
+                sp_nstep_term = d_term
+                sp_nstep_next_obs = d_next_obs
+                sp_nstep_gamma = d_gamma
 
         # 训练 World Model + Critic
         train_info, zs = self._model_train(
