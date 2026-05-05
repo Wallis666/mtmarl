@@ -83,7 +83,7 @@ train:
 
 eval:
   use_eval: True
-  n_eval_rollout_threads: 11
+  n_eval_rollout_threads: 22
   eval_episodes: 8
 
 render:
