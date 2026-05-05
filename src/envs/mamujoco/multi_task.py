@@ -156,6 +156,25 @@ class MultiTaskMaMuJoCo:
             for agent in self._agents
         }
 
+        # -- 构建列表形式空间（供 VecEnv wrapper 和算法按索引访问）--
+        self.observation_space: list[Box] = [
+            self._observation_spaces[agent]
+            for agent in self._agents
+        ]
+        self.share_observation_space: list[Box] = [
+            Box(
+                low=-np.inf,
+                high=np.inf,
+                shape=(self._obs_size,),
+                dtype=np.float64,
+            )
+            for _ in range(self._n_agents)
+        ]
+        self.action_space: list[Box] = [
+            self._action_spaces[agent]
+            for agent in self._agents
+        ]
+
         # -- 当前任务状态 --
         self._task_idx: int = 0
 

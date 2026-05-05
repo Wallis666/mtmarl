@@ -1,0 +1,99 @@
+# MTMARL: 多任务多智能体世界模型训练配置
+
+seed:
+  seed: 1
+  seed_specify: True
+
+device:
+  cuda: True
+  cuda_deterministic: True
+  torch_threads: 64
+
+logger:
+  log_dir: "./runs"
+  save_model: False
+
+algo:
+  gamma: 0.995
+  policy_freq: 1
+  fixed_order: False
+  polyak: 0.01
+  alpha: 0.2
+  auto_alpha: True
+
+model:
+  hidden_sizes: [128, 128]
+  lr: 5.0e-4
+  critic_lr: 5.0e-4
+  entropy_coef: 1.0e-4
+  log_std_min: -10
+  log_std_max: 2
+
+world_model:
+  latent_dim: 128
+  simnorm_dim: 8
+  num_enc_layers: 2
+  enc_lr_scale: 0.3
+  # dynamics: 2 experts → ~700k params
+  num_dynamics_experts: 2
+  dynamics_mlp_dims: [512, 512]
+  # reward: 2 experts → ~260k params
+  num_reward_experts: 2
+  top_k: 2
+  num_heads: 1
+  ffn_hidden: 128
+  head_hidden: 128
+  num_bins: 101
+  reward_min: -10.0
+  reward_max: 10.0
+  step_rho: 0.5
+  q_coef: 0.1
+  reward_coef: 0.1
+  dynamics_coef: 20.0
+  balance_coef: 5.0e-4
+  warmup_train: True
+  wt_steps: 2500
+
+plan:
+  use_plan: True
+  horizon: 3
+  num_samples: 128
+  num_pi_trajs: 8
+  num_elites: 16
+  iterations: 6
+  temperature: 0.5
+  max_std: 1.0
+  min_std: 0.05
+
+train:
+  num_env_steps: 2000000
+  n_rollout_threads: 4
+  warmup_steps: 10000
+  train_interval: 1
+  update_per_train: 1
+  buffer_size: 1000000
+  batch_size: 1000
+  n_step: 20
+  use_linear_lr_decay: False
+  log_interval: 1000
+  save_interval: 10000
+  eval_interval: 10000
+  model_dir: ~
+
+eval:
+  use_eval: True
+  n_eval_rollout_threads: 4
+  eval_episodes: 8
+
+render:
+  use_render: False
+
+# ============================================================
+# 环境配置（与算法配置合并在同一文件中）
+# ============================================================
+env:
+  envs:
+    "2_Agent_HalfCheetah": ["run_fwd", "run_bwd"]
+    "2_Agent_Walker2d": ["walk_fwd", "run_fwd"]
+  n_tasks: 4
+  state_type: EP
