@@ -217,7 +217,7 @@ def shareworker(
             ob = env.reset_task()
             remote.send(ob)
         elif cmd == "set_task":
-            env.set_task(data)
+            ob = env.set_task(data)
             remote.send(ob)
         elif cmd == "render":
             if data == "rgb_array":
