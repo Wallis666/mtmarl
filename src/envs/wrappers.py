@@ -216,6 +216,9 @@ def shareworker(
         elif cmd == "reset_task":
             ob = env.reset_task()
             remote.send(ob)
+        elif cmd == "set_task":
+            env.set_task(data)
+            remote.send(ob)
         elif cmd == "render":
             if data == "rgb_array":
                 fr = env.render(mode=data)
@@ -337,6 +340,16 @@ class ShareSubprocVecEnv(ShareVecEnv):
             [remote.recv() for remote in self.remotes]
         )
 
+    def meta_set_task(self, task_idxes):
+        """为每个环境设置不同的任务。"""
+        assert len(task_idxes) == len(self.remotes)
+        for remote, task_idx in zip(
+            self.remotes, task_idxes,
+        ):
+            remote.send(("set_task", task_idx))
+        for remote in self.remotes:
+            remote.recv()
+
     def close(self):
         if self.closed:
             return
@@ -440,6 +453,14 @@ class ShareDummyVecEnv(ShareVecEnv):
             np.array, zip(*results)
         )
         return obs, share_obs, available_actions
+
+    def meta_set_task(self, task_idxes):
+        """为每个环境设置不同的任务。"""
+        assert len(task_idxes) == len(self.envs)
+        for env, task_idx in zip(
+            self.envs, task_idxes,
+        ):
+            env.set_task(task_idx)
 
     def close(self):
         for env in self.envs:

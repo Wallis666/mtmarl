@@ -167,6 +167,7 @@ class WorldModelRunner:
             n_threads,
             self.env_args,
         )
+        self.envs.meta_set_task(self.task_idxes)
 
         if self.algo_args["eval"]["use_eval"]:
             self.eval_envs = make_eval_env(
@@ -177,6 +178,7 @@ class WorldModelRunner:
                 ],
                 self.env_args,
             )
+            self.eval_envs.meta_set_task(self.task_idxes)
         else:
             self.eval_envs = None
 
